@@ -14,7 +14,7 @@ struct ReaderModelTests {
     @Test func searchFindsEveryMatchInDocumentOrder() async throws {
         let model = ReaderModel(
             document: TestPDF.make(pages: ["The quick brown fox", "Nothing here", "Another fox and a FOX"]),
-            libraryItem: nil
+            entry: nil, store: nil, fileURL: nil
         )
 
         try await search(model, for: "fox")
@@ -25,7 +25,7 @@ struct ReaderModelTests {
     }
 
     @Test func newQueryReplacesPreviousResults() async throws {
-        let model = ReaderModel(document: TestPDF.make(pages: ["brown fox", "fox", "fox"]), libraryItem: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["brown fox", "fox", "fox"]), entry: nil, store: nil, fileURL: nil)
 
         // Start one search, then replace it before it can finish.
         model.searchQuery = "fox"
@@ -37,7 +37,8 @@ struct ReaderModelTests {
     }
 
     @Test func clearingQueryClearsResultsAndHighlights() async throws {
-        let model = ReaderModel(document: TestPDF.make(pages: ["fox"]), libraryItem: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["fox"]), entry: nil, store: nil, fileURL: nil)
+        model.isSearchBarVisible = true
         try await search(model, for: "fox")
         #expect(model.isShowingSearchResults)
 
@@ -49,7 +50,7 @@ struct ReaderModelTests {
     }
 
     @Test func nextAndPreviousResultWrapAround() async throws {
-        let model = ReaderModel(document: TestPDF.make(pages: ["fox", "fox", "fox"]), libraryItem: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["fox", "fox", "fox"]), entry: nil, store: nil, fileURL: nil)
         try await search(model, for: "fox")
         try #require(model.searchResults.count == 3)
 
@@ -65,7 +66,7 @@ struct ReaderModelTests {
     }
 
     @Test func snippetShowsTheLineWithTheMatchInBold() async throws {
-        let model = ReaderModel(document: TestPDF.make(pages: ["The quick brown fox"]), libraryItem: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["The quick brown fox"]), entry: nil, store: nil, fileURL: nil)
         try await search(model, for: "brown")
 
         let snippet = try #require(model.searchResults.first?.snippet)
@@ -77,7 +78,7 @@ struct ReaderModelTests {
     }
 
     @Test func goToPageIgnoresNumbersOutsideTheDocument() {
-        let model = ReaderModel(document: TestPDF.make(pages: ["one", "two"]), libraryItem: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["one", "two"]), entry: nil, store: nil, fileURL: nil)
 
         model.goToPage(number: 0)
         model.goToPage(number: 3)
@@ -99,7 +100,7 @@ struct ReaderModelTests {
         root.insertChild(chapter, at: 0)
         document.outlineRoot = root
 
-        let model = ReaderModel(document: document, libraryItem: nil)
+        let model = ReaderModel(document: document, entry: nil, store: nil, fileURL: nil)
 
         #expect(model.outline.map(\.title) == ["Chapter 1"])
         #expect(model.outline.first?.children?.map(\.title) == ["Section 1.1"])
@@ -107,7 +108,7 @@ struct ReaderModelTests {
     }
 
     @Test func emptyOutlineWhenPDFHasNone() {
-        let model = ReaderModel(document: TestPDF.make(pages: ["one"]), libraryItem: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["one"]), entry: nil, store: nil, fileURL: nil)
         #expect(model.outline.isEmpty)
     }
 }

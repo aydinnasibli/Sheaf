@@ -2,93 +2,176 @@ import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// What the library is showing, chosen in the sidebar.
+/// What the library is showing, chosen in the left panel.
 enum LibraryScope: Hashable {
     case all
     case starred
     case collection(UUID)
 }
 
-/// The library window: every PDF opened in Sheaf, with collections,
-/// reading progress and (from stage 3) highlights.
-struct LibraryWindow: View {
-    @Environment(LibraryStore.self) private var library
-    @Environment(\.openDocument) private var openDocument
-    @Query(sort: \LibraryEntry.lastOpenedAt, order: .reverse) private var items: [LibraryEntry]
-    @Query(sort: \PDFCollection.createdAt) private var collections: [PDFCollection]
+/// The filter chips above the list.
+enum LibraryFilter: Hashable, CaseIterable {
+    case all, unread, inProgress, finished, openQuestions
 
-    @State private var scope = LibraryScope.all
-    @State private var status: ReadingStatus?
-    @State private var searchText = ""
-    @State private var selection = Set<LibraryEntry.ID>()
-    @State private var sortOrder = [KeyPathComparator(\LibraryEntry.lastOpenedAt, order: .reverse)]
-    @State private var isImporting = false
-    @State private var showsInspector = true
-    @State private var missingItem: LibraryEntry?
-    @State private var isDropTargeted = false
-    @State private var searchFocus = LibrarySearchFocus()
-    @FocusState private var isSearchFocused: Bool
-
-    var body: some View {
-        NavigationSplitView {
-            LibrarySidebar(scope: $scope, items: items, collections: collections)
-                .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 300)
-        } detail: {
-            content
-                .inspector(isPresented: $showsInspector) {
-                    HighlightsGuidePanel()
-                        .inspectorColumnWidth(min: 250, ideal: 290, max: 360)
-                }
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .unread: "Unread"
+        case .inProgress: "In progress"
+        case .finished: "Finished"
+        case .openQuestions: "Open questions"
         }
-        .navigationTitle("Library")
-        .searchable(text: $searchText, placement: .toolbar, prompt: "Search library")
-        .searchFocused($isSearchFocused)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Open PDF", systemImage: "plus") { isImporting = true }
-                    .help("Open a PDF and add it to the library")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button(showsInspector ? "Hide Highlights Panel" : "Show Highlights Panel", systemImage: "sidebar.right") {
-                    showsInspector.toggle()
-                }
-            }
-        }
-        .fileImporter(isPresented: $isImporting, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
-            guard case .success(let urls) = result else { return }
-            for url in urls { library.keepAccess(to: url) }
-            library.add(urls: urls)
-            openFiles(urls)
-        }
-        .alert(
-            "Can't Find “\(missingItem?.title ?? "")”",
-            isPresented: Binding(get: { missingItem != nil }, set: { if !$0 { missingItem = nil } }),
-            presenting: missingItem
-        ) { item in
-            Button("Remove from Library", role: .destructive) { library.remove([item]) }
-            Button("Keep", role: .cancel) {}
-        } message: { item in
-            Text("It was last at \(item.lastKnownPath). It may have been deleted, or moved to a drive that isn't connected.")
-        }
-        .focusedSceneValue(searchFocus)
-        .onChange(of: searchFocus.request) { isSearchFocused = true }
     }
 
-    // MARK: Content
+    func matches(_ entry: LibraryEntry) -> Bool {
+        switch self {
+        case .all: true
+        case .unread: entry.readingStatus == .unread
+        case .inProgress: entry.readingStatus == .inProgress
+        case .finished: entry.readingStatus == .finished
+        case .openQuestions: entry.hasOpenQuestions
+        }
+    }
+}
 
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            if items.isEmpty {
-                emptyLibrary
+/// The list's sortable columns.
+enum LibraryColumn {
+    case title, collection, highlights, read, opened
+}
+
+/// Lets Edit > Find and ⌘K focus the library's search field.
+@Observable
+final class LibrarySearchFocus {
+    var request = 0
+}
+
+/// The library window (C · Library mockup): header with search, the left
+/// panel, the list of PDFs and recent highlights.
+struct LibraryWindow: View {
+    @Environment(LibraryStore.self) private var library
+    @Environment(\.openWindow) private var openWindow
+    @Query(sort: \LibraryEntry.lastOpenedAt, order: .reverse) private var entries: [LibraryEntry]
+    @Query(sort: \PDFCollection.createdAt) private var collections: [PDFCollection]
+    @Query(LibraryWindow.recentHighlightsQuery) private var recentHighlights: [HighlightRecord]
+
+    @State private var scope = LibraryScope.all
+    @State private var filter = LibraryFilter.all
+    @State private var searchText = ""
+    @State private var selection: LibraryEntry.ID?
+    @State private var sortColumn = LibraryColumn.opened
+    @State private var sortAscending = false
+    @State private var missingEntry: LibraryEntry?
+    @State private var isDropTargeted = false
+    @State private var searchFocus = LibrarySearchFocus()
+    @State private var width: CGFloat = 1280
+    @FocusState private var isSearchFocused: Bool
+
+    static var recentHighlightsQuery: FetchDescriptor<HighlightRecord> {
+        var descriptor = FetchDescriptor<HighlightRecord>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        descriptor.fetchLimit = 6
+        return descriptor
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if width >= 820 {
+                LibraryNav(scope: $scope, entries: entries, collections: collections)
+                    .frame(width: 216)
+                Hairline(axis: .vertical)
+            }
+            main
+            if width >= 1100 {
+                Hairline(axis: .vertical)
+                RecentHighlightsPanel(records: recentHighlights) { record in
+                    if let entry = record.entry {
+                        entry.lastPageIndex = record.pageIndex
+                        open([entry])
+                    }
+                }
+                .frame(width: 300)
+            }
+        }
+        .overlay(alignment: .top) { Hairline() }
+        .background(Theme.background)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .navigationTitle("Library")
+        .toolbar { header }
+        .sheafHeader()
+        .focusedSceneValue(searchFocus)
+        .onChange(of: searchFocus.request) { isSearchFocused = true }
+        .onAppear { WindowRouter.shared.attach(openWindow) }
+        .alert(
+            "Can\u{2019}t Find \u{201C}\(missingEntry?.title ?? "")\u{201D}",
+            isPresented: Binding(get: { missingEntry != nil }, set: { if !$0 { missingEntry = nil } }),
+            presenting: missingEntry
+        ) { entry in
+            Button("Remove from Library", role: .destructive) { library.remove([entry]) }
+            Button("Keep", role: .cancel) {}
+        } message: { entry in
+            Text("It was last at \(entry.lastKnownPath). It may have been deleted, or moved to a drive that isn\u{2019}t connected.")
+        }
+    }
+
+    // MARK: Header
+
+    @ToolbarContentBuilder
+    private var header: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Wordmark().padding(.horizontal, 6)
+        }
+        .plainBackground()
+
+        ToolbarItem(placement: .principal) {
+            LibrarySearchField(text: $searchText, isFocused: $isSearchFocused)
+                .frame(width: min(520, max(240, width - 560)))
+        }
+        .plainBackground()
+
+        ToolbarItem(placement: .primaryAction) {
+            PrimaryButton(title: "Open PDF", systemImage: "plus") {
+                WindowRouter.shared.showOpenPanel()
+            }
+            .help("Open PDFs and add them to the library (\u{2318}O)")
+        }
+        .plainBackground()
+    }
+
+    // MARK: Main column
+
+    private var main: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(scopeTitle)
+                    .font(Theme.display(32))
+                    .tracking(-0.9)
+                    .foregroundStyle(Theme.ink)
+                Text(rows.count == 1 ? "1 PDF" : "\(rows.count) PDFs")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.inkMuted)
+            }
+
+            HStack(spacing: 6) {
+                ForEach(LibraryFilter.allCases, id: \.self) { option in
+                    FilterChip(
+                        title: option.title,
+                        dot: option == .openQuestions ? HighlightKind.question.vivid : nil,
+                        isSelected: filter == option
+                    ) { filter = option }
+                }
+            }
+
+            if entries.isEmpty {
+                EmptyLibrary()
             } else if rows.isEmpty {
                 ContentUnavailableView.search(text: searchText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                table
+                list
             }
         }
-        .background(Theme.background)
+        .padding(.horizontal, 32)
+        .padding(.top, 26)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .dropDestination(for: URL.self) { urls, _ in
             let pdfs = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .pdf) ?? false }
             library.add(urls: pdfs)
@@ -96,136 +179,100 @@ struct LibraryWindow: View {
         } isTargeted: { isDropTargeted = $0 }
         .overlay {
             if isDropTargeted {
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                    .padding(8)
+                    .padding(10)
                     .allowsHitTesting(false)
             }
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(scopeTitle)
-                    .font(Theme.display(30))
-                    .tracking(-0.8)
-                    .foregroundStyle(Theme.ink)
-                Text(rows.count == 1 ? "1 PDF" : "\(rows.count) PDFs")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.inkMuted)
-            }
-            HStack(spacing: 6) {
-                FilterChip(title: "All", isSelected: status == nil) { status = nil }
-                ForEach(ReadingStatus.allCases) { option in
-                    FilterChip(title: option.rawValue, isSelected: status == option) { status = option }
+    private var list: some View {
+        VStack(spacing: 0) {
+            ColumnHeader(sortColumn: $sortColumn, ascending: $sortAscending)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(rows) { entry in
+                            LibraryRow(entry: entry, isSelected: selection == entry.id)
+                                .id(entry.id)
+                                .onTapGesture(count: 2) { open([entry]) }
+                                .simultaneousGesture(TapGesture().onEnded { selection = entry.id })
+                                .contextMenu { menu(for: entry) }
+                        }
+                    }
+                    .padding(.bottom, 24)
+                }
+                .onChange(of: selection) { _, id in
+                    if let id { proxy.scrollTo(id) }
                 }
             }
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 22)
-        .padding(.bottom, 12)
-    }
-
-    private var table: some View {
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("Title", value: \.title) { item in
-                TitleCell(item: item)
-            }
-            .width(min: 220, ideal: 360)
-
-            TableColumn("Collection", value: \.collectionName) { item in
-                CollectionCell(collection: item.collection)
-            }
-            .width(min: 110, ideal: 160)
-
-            TableColumn("Highlights") { _ in
-                Text("—").foregroundStyle(Theme.inkMuted)
-            }
-            .width(min: 80, ideal: 120)
-
-            TableColumn("Read", value: \.progress) { item in
-                Text(item.progress, format: .percent.precision(.fractionLength(0)))
-                    .monospacedDigit()
-                    .foregroundStyle(item.readingStatus == .unread ? Theme.inkMuted : Theme.inkSecondary)
-            }
-            .width(min: 50, ideal: 60)
-
-            TableColumn("Opened", value: \.lastOpenedAt) { item in
-                Text(item.lastOpenedAt, format: .relative(presentation: .named))
-                    .foregroundStyle(Theme.inkMuted)
-            }
-            .width(min: 90, ideal: 120)
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.downArrow) { moveSelection(by: 1) }
+        .onKeyPress(.upArrow) { moveSelection(by: -1) }
+        .onKeyPress(.return) {
+            guard let entry = rows.first(where: { $0.id == selection }) else { return .ignored }
+            open([entry])
+            return .handled
         }
-        .tableStyle(.inset(alternatesRowBackgrounds: false))
-        .scrollContentBackground(.hidden)
-        .contextMenu(forSelectionType: LibraryEntry.ID.self) { ids in
-            itemMenu(for: selectedItems(ids))
-        } primaryAction: { ids in
-            open(selectedItems(ids))
-        }
-    }
-
-    private var emptyLibrary: some View {
-        ContentUnavailableView {
-            Label("Your Library Is Empty", systemImage: "doc.on.doc")
-        } description: {
-            Text("Open a PDF or drag one here. Every PDF you open in Sheaf is added automatically, and stays where it is on your Mac.")
-        } actions: {
-            Button("Open PDF…") { isImporting = true }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accent)
-                .foregroundStyle(Theme.onAccent)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
-    private func itemMenu(for selected: [LibraryEntry]) -> some View {
-        if !selected.isEmpty {
-            Button("Open") { open(selected) }
-            Button("Show in Finder") {
-                let urls = selected.compactMap { library.resolveFile(for: $0) }
-                NSWorkspace.shared.activateFileViewerSelecting(urls)
+    private func menu(for entry: LibraryEntry) -> some View {
+        Button("Open") { open([entry]) }
+        Button("Show in Finder") {
+            if let url = library.resolveFile(for: entry) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
             }
-            Divider()
-            let allStarred = selected.allSatisfy(\.isStarred)
-            Button(allStarred ? "Unstar" : "Star") { library.setStarred(!allStarred, for: selected) }
-            Menu("Add to Collection") {
-                ForEach(collections) { collection in
-                    Button(collection.name) { library.move(selected, to: collection) }
-                }
-                if !collections.isEmpty { Divider() }
-                Button("New Collection") {
-                    let collection = library.createCollection(named: "New Collection")
-                    library.move(selected, to: collection)
-                }
+        }
+        Divider()
+        Button(entry.isStarred ? "Unstar" : "Star") { library.setStarred(!entry.isStarred, for: [entry]) }
+        Menu("Add to Collection") {
+            ForEach(collections) { collection in
+                Button(collection.name) { library.move([entry], to: collection) }
             }
-            if selected.contains(where: { $0.collection != nil }) {
-                Button("Remove from Collection") { library.move(selected, to: nil) }
+            if !collections.isEmpty { Divider() }
+            Button("New Collection") {
+                library.move([entry], to: library.createCollection(named: "New Collection"))
             }
-            Divider()
-            Button("Remove from Library", role: .destructive) {
-                selection.subtract(selected.map(\.id))
-                library.remove(selected)
-            }
+        }
+        if entry.collection != nil {
+            Button("Remove from Collection") { library.move([entry], to: nil) }
+        }
+        Divider()
+        Button("Remove from Library", role: .destructive) {
+            if selection == entry.id { selection = nil }
+            library.remove([entry])
         }
     }
 
     // MARK: Data
 
     private var rows: [LibraryEntry] {
-        items
-            .filter { item in
-                switch scope {
-                case .all: true
-                case .starred: item.isStarred
-                case .collection(let id): item.collection?.id == id
-                }
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let shown = entries.filter { entry in
+            let inScope = switch scope {
+            case .all: true
+            case .starred: entry.isStarred
+            case .collection(let id): entry.collection?.id == id
             }
-            .filter { status == nil || $0.readingStatus == status }
-            .filter { searchText.isEmpty || $0.title.localizedStandardContains(searchText) }
-            .sorted(using: sortOrder)
+            guard inScope, filter.matches(entry) else { return false }
+            guard !query.isEmpty else { return true }
+            return entry.title.localizedStandardContains(query)
+                || entry.highlights.contains { $0.text.localizedStandardContains(query) || $0.note.localizedStandardContains(query) }
+        }
+        let sorted = shown.sorted { a, b in
+            switch sortColumn {
+            case .title: a.title.localizedStandardCompare(b.title) == .orderedAscending
+            case .collection: a.collectionName.localizedStandardCompare(b.collectionName) == .orderedAscending
+            case .highlights: a.highlights.count < b.highlights.count
+            case .read: a.progress < b.progress
+            case .opened: a.lastOpenedAt < b.lastOpenedAt
+            }
+        }
+        return sortAscending ? sorted : sorted.reversed()
     }
 
     private var scopeTitle: String {
@@ -236,113 +283,156 @@ struct LibraryWindow: View {
         }
     }
 
-    private func selectedItems(_ ids: Set<LibraryEntry.ID>) -> [LibraryEntry] {
-        rows.filter { ids.contains($0.id) }
+    private func moveSelection(by offset: Int) -> KeyPress.Result {
+        let ids = rows.map(\.id)
+        guard !ids.isEmpty else { return .ignored }
+        let current = selection.flatMap { ids.firstIndex(of: $0) } ?? (offset > 0 ? -1 : ids.count)
+        selection = ids[min(max(current + offset, 0), ids.count - 1)]
+        return .handled
     }
 
     private func open(_ selected: [LibraryEntry]) {
-        for item in selected {
-            guard let url = library.resolveFile(for: item) else {
-                missingItem = item
+        for entry in selected {
+            guard library.resolveFile(for: entry) != nil else {
+                missingEntry = entry
                 continue
             }
-            openFiles([url])
-        }
-    }
-
-    private func openFiles(_ urls: [URL]) {
-        for url in urls {
-            Task { try? await openDocument(at: url) }
+            WindowRouter.shared.open(entry)
         }
     }
 }
 
 extension LibraryEntry {
-    /// For sorting the Collection column; PDFs without one sort last.
+    /// For sorting by collection; PDFs without one sort last.
     var collectionName: String { collection?.name ?? "\u{10FFFF}" }
 }
 
-/// Lets Edit > Find focus the library's search field.
-@Observable
-final class LibrarySearchFocus {
-    var request = 0
+// MARK: - Header search
+
+private struct LibrarySearchField: View {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.inkMuted)
+            TextField("Search PDFs, highlights and notes", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13.5))
+                .foregroundStyle(Theme.ink)
+                .focused(isFocused)
+                .onExitCommand { text = "" }
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.inkMuted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+            Text("\u{2318}K")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.inkSecondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Theme.background, in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.control, lineWidth: 1))
+                .accessibilityHidden(true)
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .frame(height: 38)
+        .background(Theme.field, in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture { isFocused.wrappedValue = true }
+    }
 }
 
-// MARK: - Sidebar
+// MARK: - Left panel
 
-private struct LibrarySidebar: View {
+private struct LibraryNav: View {
     @Environment(LibraryStore.self) private var library
     @Binding var scope: LibraryScope
-    let items: [LibraryEntry]
+    let entries: [LibraryEntry]
     let collections: [PDFCollection]
 
     @State private var renaming: PDFCollection?
     @State private var nameDraft = ""
 
     var body: some View {
-        List(selection: Binding(get: { scope }, set: { if let new = $0 { scope = new } })) {
-            Section {
-                Label("Library", systemImage: "doc.text")
-                    .badge(items.count)
-                    .tag(LibraryScope.all)
-                Label("Starred", systemImage: "star")
-                    .badge(items.filter(\.isStarred).count)
-                    .tag(LibraryScope.starred)
-            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(spacing: 2) {
+                    NavRow(title: "Library", count: entries.count, isSelected: scope == .all) {
+                        Image(systemName: "doc.text")
+                    } action: { scope = .all }
+                    NavRow(title: "Starred", count: entries.count(where: \.isStarred), isSelected: scope == .starred) {
+                        Image(systemName: "star")
+                    } action: { scope = .starred }
+                }
 
-            Section("Collections") {
-                ForEach(collections) { collection in
-                    Label {
-                        Text(collection.name)
-                    } icon: {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Theme.collectionColor(collection.colorIndex))
-                            .frame(width: 12, height: 12)
-                    }
-                    .badge(collection.items.count)
-                    .tag(LibraryScope.collection(collection.id))
-                    .contextMenu {
-                        Button("Rename…") { startRenaming(collection) }
-                        Button("Delete Collection", role: .destructive) {
-                            if scope == .collection(collection.id) { scope = .all }
-                            library.delete(collection)
+                VStack(alignment: .leading, spacing: 2) {
+                    SectionLabel(title: "Collections")
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 6)
+                    ForEach(collections) { collection in
+                        NavRow(
+                            title: collection.name,
+                            count: collection.items.count,
+                            isSelected: scope == .collection(collection.id)
+                        ) {
+                            Swatch(color: Theme.collectionColor(collection.colorIndex))
+                        } action: {
+                            scope = .collection(collection.id)
+                        }
+                        .contextMenu {
+                            Button("Rename\u{2026}") { startRenaming(collection) }
+                            Button("Delete Collection", role: .destructive) {
+                                if scope == .collection(collection.id) { scope = .all }
+                                library.delete(collection)
+                            }
                         }
                     }
-                }
-                Button {
-                    let collection = library.createCollection(named: "New Collection")
-                    startRenaming(collection)
-                } label: {
-                    Label("New Collection", systemImage: "plus")
+                    Button {
+                        startRenaming(library.createCollection(named: "New Collection"))
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "plus").frame(width: 16)
+                            Text("New Collection")
+                        }
+                        .font(.system(size: 13))
                         .foregroundStyle(Theme.inkMuted)
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-            }
 
-            Section("Highlight colors") {
-                ForEach(HighlightKind.allCases) { kind in
-                    HStack(spacing: 10) {
-                        Capsule().fill(kind.swatch).frame(width: 22, height: 10)
-                        Text(kind.name).foregroundStyle(Theme.inkSecondary)
-                        Spacer()
-                        Text(String(kind.rawValue))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Theme.inkMuted)
-                            .help("Press \(kind.rawValue) while reading to pick this highlighter")
+                VStack(alignment: .leading, spacing: 9) {
+                    SectionLabel(title: "Highlight colors")
+                        .padding(.horizontal, 10)
+                    let counts = totalCounts
+                    ForEach(Array(HighlightKind.allCases.enumerated()), id: \.element) { index, kind in
+                        HStack(spacing: 10) {
+                            Capsule().fill(kind.swatch).frame(width: 22, height: 10)
+                            Text(kind.name).foregroundStyle(Theme.inkSecondary)
+                            Spacer()
+                            Text(String(counts[index]))
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.inkMuted)
+                        }
+                        .font(.system(size: 13))
+                        .padding(.horizontal, 10)
+                        .help("\(kind.purpose). Press \(kind.rawValue) while reading.")
                     }
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 16)
         }
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .top) {
-            HStack {
-                Wordmark()
-                Spacer()
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 4)
-            .padding(.bottom, 8)
-        }
+        .background(Theme.sidebar)
         .alert("Rename Collection", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $nameDraft)
             Button("Rename") {
@@ -352,39 +442,191 @@ private struct LibrarySidebar: View {
         }
     }
 
+    private var totalCounts: [Int] {
+        entries.reduce(into: Array(repeating: 0, count: HighlightKind.allCases.count)) { totals, entry in
+            for (index, count) in entry.highlightCounts.enumerated() { totals[index] += count }
+        }
+    }
+
     private func startRenaming(_ collection: PDFCollection) {
         nameDraft = collection.name
         renaming = collection
     }
 }
 
-// MARK: - Cells and pieces
-
-private struct TitleCell: View {
-    let item: LibraryEntry
+private struct NavRow<Icon: View>: View {
+    let title: String
+    let count: Int
+    let isSelected: Bool
+    @ViewBuilder var icon: Icon
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Cover(data: item.cover)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Text(item.title)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Theme.ink)
-                        .lineLimit(1)
-                    if item.isStarred {
-                        Image(systemName: "star.fill")
-                            .font(.caption2)
-                            .foregroundStyle(Theme.inkMuted)
-                            .accessibilityLabel("Starred")
-                    }
-                }
-                Text(item.pageCount == 1 ? "1 page" : "\(item.pageCount) pages")
-                    .font(.system(size: 12))
+        Button(action: action) {
+            HStack(spacing: 10) {
+                icon.frame(width: 16)
+                Text(title).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(String(count))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.inkMuted)
             }
+            .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+            .foregroundStyle(isSelected ? Theme.ink : Theme.inkSecondary)
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(isSelected ? Theme.navSelected : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? Theme.control : .clear, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .padding(.vertical, 6)
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+// MARK: - List
+
+/// Column widths, as fractions of the list width (from the mockup).
+private enum Columns {
+    static let title: CGFloat = 0.41
+    static let collection: CGFloat = 0.20
+    static let highlights: CGFloat = 0.18
+    static let read: CGFloat = 0.09
+    static let opened: CGFloat = 0.12
+}
+
+private struct ColumnHeader: View {
+    @Binding var sortColumn: LibraryColumn
+    @Binding var ascending: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            HStack(spacing: 0) {
+                header("Title", .title, width * Columns.title)
+                header("Collection", .collection, width * Columns.collection)
+                header("Highlights", .highlights, width * Columns.highlights)
+                header("Read", .read, width * Columns.read)
+                header("Opened", .opened, width * Columns.opened)
+            }
+        }
+        .frame(height: 34)
+        .overlay(alignment: .bottom) { Hairline() }
+    }
+
+    private func header(_ title: String, _ column: LibraryColumn, _ width: CGFloat) -> some View {
+        Button {
+            if sortColumn == column {
+                ascending.toggle()
+            } else {
+                sortColumn = column
+                ascending = column == .title || column == .collection
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                if sortColumn == column {
+                    Image(systemName: ascending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(sortColumn == column ? Theme.inkSecondary : Theme.inkMuted)
+            .frame(width: width, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Sort by \(title)")
+    }
+}
+
+private struct LibraryRow: View {
+    let entry: LibraryEntry
+    let isSelected: Bool
+
+    @State private var isHovered = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            HStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    Cover(data: entry.cover)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(entry.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.ink)
+                                .lineLimit(1)
+                            if entry.isStarred {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Theme.inkMuted)
+                                    .accessibilityLabel("Starred")
+                            }
+                        }
+                        Text(entry.pageCount == 1 ? "1 page" : "\(entry.pageCount) pages")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    Spacer(minLength: 12)
+                }
+                .frame(width: width * Columns.title, alignment: .leading)
+
+                Group {
+                    if let collection = entry.collection {
+                        HStack(spacing: 7) {
+                            Swatch(color: Theme.collectionColor(collection.colorIndex), size: 10)
+                            Text(collection.name).lineLimit(1)
+                        }
+                    } else {
+                        Text("\u{2014}").foregroundStyle(Theme.inkMuted)
+                    }
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.inkSecondary)
+                .frame(width: width * Columns.collection, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    let counts = entry.highlightCounts
+                    let total = counts.reduce(0, +)
+                    HighlightMixBar(counts: counts, width: min(88, width * Columns.highlights - 36))
+                    Text(total == 0 ? "\u{2014}" : String(total))
+                        .font(.system(size: 12))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.inkSecondary)
+                }
+                .frame(width: width * Columns.highlights, alignment: .leading)
+
+                Text(entry.progress, format: .percent.precision(.fractionLength(0)))
+                    .font(.system(size: 13))
+                    .monospacedDigit()
+                    .foregroundStyle(entry.readingStatus == .unread ? Theme.inkMuted : Theme.inkSecondary)
+                    .frame(width: width * Columns.read, alignment: .leading)
+
+                Text(entry.lastOpenedAt, format: .relative(presentation: .named))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.inkMuted)
+                    .lineLimit(1)
+                    .frame(width: width * Columns.opened, alignment: .leading)
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .frame(height: 58)
+        .padding(.horizontal, 8)
+        .background(
+            isSelected ? Theme.selectedRow : (isHovered ? Theme.selectedRow.opacity(0.5) : .clear),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.rowDivider).frame(height: 1).padding(.horizontal, 8)
+        }
+        .padding(.horizontal, -8)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Double-click to open")
     }
 }
 
@@ -394,12 +636,12 @@ private struct Cover: View {
     var body: some View {
         Group {
             if let data, let image = NSImage(data: data) {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
             } else {
-                Rectangle().fill(.white)
+                Color.white
             }
         }
-        .frame(width: 26, height: 34)
+        .frame(width: 24, height: 30)
         .background(.white)
         .clipShape(RoundedRectangle(cornerRadius: 3))
         .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.control, lineWidth: 1))
@@ -407,77 +649,104 @@ private struct Cover: View {
     }
 }
 
-private struct CollectionCell: View {
-    let collection: PDFCollection?
-
+private struct EmptyLibrary: View {
     var body: some View {
-        if let collection {
-            HStack(spacing: 7) {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Theme.collectionColor(collection.colorIndex))
-                    .frame(width: 10, height: 10)
-                    .accessibilityHidden(true)
-                Text(collection.name)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .lineLimit(1)
+        VStack(spacing: 14) {
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 38, weight: .light))
+                .foregroundStyle(Theme.inkMuted)
+            Text("Your library is empty")
+                .font(Theme.display(22))
+                .foregroundStyle(Theme.ink)
+            Text("Open a PDF or drag one here. Every PDF you open in Sheaf is added automatically and stays where it is on your Mac.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.inkMuted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+            PrimaryButton(title: "Open PDF\u{2026}", systemImage: "plus") {
+                WindowRouter.shared.showOpenPanel()
             }
-        } else {
-            Text("—").foregroundStyle(Theme.inkMuted)
+            .padding(.top, 4)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-private struct FilterChip: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
+// MARK: - Recent highlights
+
+private struct RecentHighlightsPanel: View {
+    let records: [HighlightRecord]
+    let onSelect: (HighlightRecord) -> Void
 
     var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
-                .padding(.horizontal, 13)
-                .frame(height: 28)
-                .foregroundStyle(isSelected ? Theme.onAccent : Theme.inkSecondary)
-                .background(isSelected ? Theme.accent : .clear, in: Capsule())
-                .overlay(Capsule().strokeBorder(isSelected ? .clear : Theme.control, lineWidth: 1))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-/// The right-hand panel. Shows recent highlights once highlighting exists;
-/// until then it explains what the four colors mean.
-private struct HighlightsGuidePanel: View {
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Recent highlights")
-                    .font(Theme.display(17))
-                    .foregroundStyle(Theme.ink)
-                Text("Highlights you make in any PDF will appear here. Each color means something:")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Theme.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-                ForEach(HighlightKind.allCases) { kind in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(kind.name.uppercased())
-                            .font(.system(size: 11, weight: .bold))
-                            .tracking(0.4)
-                        Text(kind.purpose)
-                            .font(.system(size: 13, weight: .medium))
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Recent highlights")
+                .font(Theme.display(18))
+                .foregroundStyle(Theme.ink)
+                .padding(.bottom, 2)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if records.isEmpty {
+                        guide
+                    } else {
+                        ForEach(records) { record in
+                            Button { onSelect(record) } label: { card(record) }
+                                .buttonStyle(.plain)
+                                .help("Open at page \(record.pageIndex + 1)")
+                        }
                     }
-                    .foregroundStyle(Color(nsColor: .black))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(Color(nsColor: kind.pageColor), in: RoundedRectangle(cornerRadius: 12))
                 }
             }
-            .padding(18)
         }
+        .padding(.horizontal, 18)
+        .padding(.top, 22)
         .background(Theme.background)
+    }
+
+    private func card(_ record: HighlightRecord) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(record.kind.name.uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.4)
+                .foregroundStyle(record.kind.chipText)
+            Text(record.text)
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(Theme.ink)
+                .lineLimit(4)
+                .multilineTextAlignment(.leading)
+            Text("\(record.entry?.title ?? "PDF") \u{00B7} p. \(record.pageIndex + 1)")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.inkSecondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(record.kind.chipBackground, in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var guide: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Highlights you make in any PDF show up here. Each color means something:")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(HighlightKind.allCases) { kind in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(kind.name.uppercased())  \u{00B7}  KEY \(kind.rawValue)")
+                        .font(.system(size: 11, weight: .bold))
+                        .tracking(0.4)
+                        .foregroundStyle(kind.chipText)
+                    Text(kind.purpose)
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(Theme.ink)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(kind.chipBackground, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
     }
 }

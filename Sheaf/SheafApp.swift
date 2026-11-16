@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct SheafApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let container: ModelContainer
     @State private var library: LibraryStore
 
@@ -17,11 +18,14 @@ struct SheafApp: App {
             container = try! LibraryStore.makeContainer(inMemory: true)
         }
         self.container = container
-        _library = State(initialValue: LibraryStore(context: container.mainContext))
+        let library = LibraryStore(context: container.mainContext)
+        _library = State(initialValue: library)
+        WindowRouter.shared.library = library
     }
 
     var body: some Scene {
-        // Listed first, so it's the window Sheaf opens at launch.
+        // Listed first, so it's the window Sheaf opens at launch. PDFs open
+        // as tabs next to it (see SheafWindows).
         Window("Library", id: "library") {
             LibraryWindow()
                 .environment(library)
@@ -29,18 +33,18 @@ struct SheafApp: App {
                 .frame(minWidth: 760, minHeight: 480)
                 .background(TabbedWindowJoiner(role: .library))
         }
-        .defaultSize(width: 1180, height: 760)
+        .defaultSize(width: 1280, height: 820)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .keyboardShortcut("l", modifiers: [.command, .shift])
         .commands { ReaderCommands() }
 
-        // Each PDF opens as a tab next to the library (see SheafWindows).
-        // macOS supplies File > Open, Open Recent and Finder's "Open With".
-        DocumentGroup(viewing: PDFFile.self) { file in
-            ReaderView(data: file.document.data, fileURL: file.fileURL)
+        WindowGroup("PDF", id: "reader", for: UUID.self) { $entryID in
+            ReaderScreen(entryID: entryID)
                 .environment(library)
                 .modelContainer(container)
                 .background(TabbedWindowJoiner(role: .reader))
         }
-        .defaultSize(width: 1100, height: 1000)
+        .defaultSize(width: 1280, height: 820)
+        .windowToolbarStyle(.unified(showsTitle: false))
     }
 }

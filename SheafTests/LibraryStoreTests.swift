@@ -138,7 +138,7 @@ struct LibraryStoreTests {
         let item = store.recordOpen(of: URL(filePath: "/book.pdf"), document: document)
         item.recordPage(2)
 
-        let model = ReaderModel(document: document, libraryItem: item)
+        let model = ReaderModel(document: document, entry: item, store: store, fileURL: nil)
         model.restoreReadingPosition()
 
         #expect(model.pdfView.currentPage.map { document.index(for: $0) } == 2)

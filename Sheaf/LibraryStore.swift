@@ -20,7 +20,40 @@ final class LibraryStore {
     /// Creates the on-disk library used by the app.
     static func makeContainer(inMemory: Bool = false) throws -> ModelContainer {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: inMemory)
-        return try ModelContainer(for: LibraryEntry.self, PDFCollection.self, configurations: configuration)
+        return try ModelContainer(for: LibraryEntry.self, PDFCollection.self, HighlightRecord.self, configurations: configuration)
+    }
+
+    func entry(id: UUID) -> LibraryEntry? {
+        let descriptor = FetchDescriptor<LibraryEntry>(predicate: #Predicate { $0.id == id })
+        return try? context.fetch(descriptor).first
+    }
+
+    // MARK: Highlights
+
+    @discardableResult
+    func addHighlight(
+        to entry: LibraryEntry, pageIndex: Int, kind: HighlightKind, text: String, rects: [CGRect], now: Date = .now
+    ) -> HighlightRecord {
+        let record = HighlightRecord(pageIndex: pageIndex, kind: kind, text: text, rects: rects, now: now)
+        context.insert(record)
+        record.entry = entry
+        save()
+        return record
+    }
+
+    func setNote(_ note: String, for record: HighlightRecord) {
+        record.note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        save()
+    }
+
+    func setKind(_ kind: HighlightKind, for record: HighlightRecord) {
+        record.kind = kind
+        save()
+    }
+
+    func delete(_ record: HighlightRecord) {
+        context.delete(record)
+        save()
     }
 
     // MARK: Adding and opening

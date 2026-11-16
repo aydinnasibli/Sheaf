@@ -1,32 +1,46 @@
 import PDFKit
 import SwiftUI
 
-/// Shows PDFKit's page view inside SwiftUI.
-///
-/// SwiftUI has no built-in PDF view, so this wraps PDFKit's AppKit `PDFView`,
-/// which provides page rendering, scrolling, zoom and text selection. The view
-/// itself is owned by `ReaderModel`, so it survives SwiftUI updates.
+/// PDFKit's page view with two additions for highlighting: it reports when
+/// a mouse selection ends, and handles the 1–4 highlighter keys.
+final class SheafPDFView: PDFView {
+    var onMouseUp: (() -> Void)?
+    /// Return true if the key was used.
+    var onHighlightKey: ((HighlightKind) -> Bool)?
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        // PDFView tracks text-selection drags inside mouseDown, so the mouse
+        // may already be up by the time it returns.
+        if NSEvent.pressedMouseButtons & 1 == 0 {
+            onMouseUp?()
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        onMouseUp?()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function])
+        if modifiers.isEmpty,
+           let characters = event.charactersIgnoringModifiers,
+           let number = Int(characters),
+           let kind = HighlightKind(rawValue: number),
+           onHighlightKey?(kind) == true {
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
+/// Shows the reader's page view inside SwiftUI. The view is owned by
+/// `ReaderModel`, so it survives SwiftUI updates.
 struct PDFKitView: NSViewRepresentable {
     let pdfView: PDFView
 
     func makeNSView(context: Context) -> PDFView { pdfView }
 
     func updateNSView(_ view: PDFView, context: Context) {}
-}
-
-/// PDFKit's page thumbnail strip, linked to the page view so the current
-/// page stays highlighted and clicking a thumbnail jumps to that page.
-struct ThumbnailView: NSViewRepresentable {
-    let pdfView: PDFView
-
-    func makeNSView(context: Context) -> PDFThumbnailView {
-        let view = PDFThumbnailView()
-        view.pdfView = pdfView
-        view.thumbnailSize = CGSize(width: 150, height: 190)
-        view.maximumNumberOfColumns = 1
-        view.backgroundColor = .clear
-        return view
-    }
-
-    func updateNSView(_ view: PDFThumbnailView, context: Context) {}
 }

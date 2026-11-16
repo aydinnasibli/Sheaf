@@ -13,6 +13,13 @@ enum Theme {
     static let field = Color(light: 0xF4F4F4, dark: 0x242424)
     static let pageCanvas = Color(light: 0xF0F0F0, dark: 0x0F0F0F)
 
+    /// Selected row in the library list.
+    static let selectedRow = Color(light: 0xF2F2F2, dark: 0x262626)
+    /// Selected item in the library's left panel.
+    static let navSelected = Color(light: 0xFFFFFF, dark: 0x2A2A2A)
+    /// The picked highlighter in the reader header.
+    static let penActive = Color(light: 0xFFFFFF, dark: 0x363636)
+
     // MARK: Lines
 
     static let border = Color(light: 0xEBEBEB, dark: 0x2A2A2A)
@@ -112,6 +119,27 @@ enum HighlightKind: Int, CaseIterable, Identifiable, Codable {
         case .question: "Things to check or ask"
         case .definition: "Terms to remember"
         case .evidence: "Data and quotes to cite"
+        }
+    }
+
+    /// Background of chips and cards for this kind: the light highlighter
+    /// color in Light Mode, a dark tint of it in Dark Mode.
+    var chipBackground: Color {
+        switch self {
+        case .keyIdea: Color(light: 0xFFE066, dark: 0x3B341C)
+        case .question: Color(light: 0xFFC2D1, dark: 0x3B292E)
+        case .definition: Color(light: 0xA5D8FF, dark: 0x25313B)
+        case .evidence: Color(light: 0xB2F2BB, dark: 0x233626)
+        }
+    }
+
+    /// Text on `chipBackground`.
+    var chipText: Color {
+        switch self {
+        case .keyIdea: Color(light: 0x111111, dark: 0xFFD43B)
+        case .question: Color(light: 0x111111, dark: 0xFF8FAB)
+        case .definition: Color(light: 0x111111, dark: 0x74C0FC)
+        case .evidence: Color(light: 0x111111, dark: 0x69DB7C)
         }
     }
 
