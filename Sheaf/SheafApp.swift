@@ -27,17 +27,19 @@ struct SheafApp: App {
                 .environment(library)
                 .modelContainer(container)
                 .frame(minWidth: 760, minHeight: 480)
+                .background(TabbedWindowJoiner(role: .library))
         }
         .defaultSize(width: 1180, height: 760)
         .keyboardShortcut("l", modifiers: [.command, .shift])
         .commands { ReaderCommands() }
 
-        // Each PDF opens in its own window, like Preview. macOS supplies
-        // File > Open, Open Recent, window tabs and Finder's "Open With".
+        // Each PDF opens as a tab next to the library (see SheafWindows).
+        // macOS supplies File > Open, Open Recent and Finder's "Open With".
         DocumentGroup(viewing: PDFFile.self) { file in
             ReaderView(data: file.document.data, fileURL: file.fileURL)
                 .environment(library)
                 .modelContainer(container)
+                .background(TabbedWindowJoiner(role: .reader))
         }
         .defaultSize(width: 1100, height: 1000)
     }

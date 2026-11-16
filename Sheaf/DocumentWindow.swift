@@ -4,6 +4,7 @@ import SwiftUI
 struct DocumentWindow: View {
     @Bindable var model: ReaderModel
 
+    @Environment(\.openWindow) private var openWindow
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var pageEntry = ""
     @FocusState private var isSearchFocused: Bool
@@ -54,6 +55,10 @@ struct DocumentWindow: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button("Library", systemImage: "chevron.left") { openWindow(id: "library") }
+                .help("Back to the library (⇧⌘L)")
+        }
         ToolbarItem {
             ControlGroup {
                 Button("Previous Page", systemImage: "chevron.up", action: model.goToPreviousPage)
