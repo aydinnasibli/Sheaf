@@ -7,6 +7,8 @@ struct ReaderView: View {
     let data: Data
     let fileURL: URL?
 
+    @Environment(LibraryStore.self) private var library
+
     private enum Phase {
         case loading
         case locked(PDFDocument)
@@ -23,7 +25,7 @@ struct ReaderView: View {
                 ProgressView()
             case .locked(let document):
                 UnlockView(document: document) {
-                    phase = .ready(ReaderModel(document: document, fileURL: fileURL))
+                    phase = .ready(makeModel(for: document))
                 }
             case .ready(let model):
                 DocumentWindow(model: model)
@@ -43,10 +45,14 @@ struct ReaderView: View {
                 phase = .failed
                 return
             }
-            phase = document.isLocked
-                ? .locked(document)
-                : .ready(ReaderModel(document: document, fileURL: fileURL))
+            phase = document.isLocked ? .locked(document) : .ready(makeModel(for: document))
         }
+    }
+
+    /// Adds the PDF to the library (or finds it there) and sets up the reader.
+    private func makeModel(for document: PDFDocument) -> ReaderModel {
+        let item = fileURL.map { library.recordOpen(of: $0, document: document) }
+        return ReaderModel(document: document, libraryItem: item)
     }
 }
 

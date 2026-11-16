@@ -14,7 +14,7 @@ struct ReaderModelTests {
     @Test func searchFindsEveryMatchInDocumentOrder() async throws {
         let model = ReaderModel(
             document: TestPDF.make(pages: ["The quick brown fox", "Nothing here", "Another fox and a FOX"]),
-            fileURL: nil
+            libraryItem: nil
         )
 
         try await search(model, for: "fox")
@@ -25,7 +25,7 @@ struct ReaderModelTests {
     }
 
     @Test func newQueryReplacesPreviousResults() async throws {
-        let model = ReaderModel(document: TestPDF.make(pages: ["brown fox", "fox", "fox"]), fileURL: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["brown fox", "fox", "fox"]), libraryItem: nil)
 
         // Start one search, then replace it before it can finish.
         model.searchQuery = "fox"
@@ -37,7 +37,7 @@ struct ReaderModelTests {
     }
 
     @Test func clearingQueryClearsResultsAndHighlights() async throws {
-        let model = ReaderModel(document: TestPDF.make(pages: ["fox"]), fileURL: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["fox"]), libraryItem: nil)
         try await search(model, for: "fox")
         #expect(model.isShowingSearchResults)
 
@@ -49,7 +49,7 @@ struct ReaderModelTests {
     }
 
     @Test func nextAndPreviousResultWrapAround() async throws {
-        let model = ReaderModel(document: TestPDF.make(pages: ["fox", "fox", "fox"]), fileURL: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["fox", "fox", "fox"]), libraryItem: nil)
         try await search(model, for: "fox")
         try #require(model.searchResults.count == 3)
 
@@ -65,7 +65,7 @@ struct ReaderModelTests {
     }
 
     @Test func snippetShowsTheLineWithTheMatchInBold() async throws {
-        let model = ReaderModel(document: TestPDF.make(pages: ["The quick brown fox"]), fileURL: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["The quick brown fox"]), libraryItem: nil)
         try await search(model, for: "brown")
 
         let snippet = try #require(model.searchResults.first?.snippet)
@@ -77,7 +77,7 @@ struct ReaderModelTests {
     }
 
     @Test func goToPageIgnoresNumbersOutsideTheDocument() {
-        let model = ReaderModel(document: TestPDF.make(pages: ["one", "two"]), fileURL: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["one", "two"]), libraryItem: nil)
 
         model.goToPage(number: 0)
         model.goToPage(number: 3)
@@ -99,7 +99,7 @@ struct ReaderModelTests {
         root.insertChild(chapter, at: 0)
         document.outlineRoot = root
 
-        let model = ReaderModel(document: document, fileURL: nil)
+        let model = ReaderModel(document: document, libraryItem: nil)
 
         #expect(model.outline.map(\.title) == ["Chapter 1"])
         #expect(model.outline.first?.children?.map(\.title) == ["Section 1.1"])
@@ -107,7 +107,7 @@ struct ReaderModelTests {
     }
 
     @Test func emptyOutlineWhenPDFHasNone() {
-        let model = ReaderModel(document: TestPDF.make(pages: ["one"]), fileURL: nil)
+        let model = ReaderModel(document: TestPDF.make(pages: ["one"]), libraryItem: nil)
         #expect(model.outline.isEmpty)
     }
 }

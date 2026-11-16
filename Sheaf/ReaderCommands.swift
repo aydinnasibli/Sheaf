@@ -3,13 +3,20 @@ import SwiftUI
 /// Menu bar items for the frontmost document window.
 struct ReaderCommands: Commands {
     @FocusedValue(ReaderModel.self) private var reader
+    @FocusedValue(LibrarySearchFocus.self) private var librarySearch
 
     var body: some Commands {
         // Edit > Find. Replaces the text-editing group, which a reader doesn't need.
         CommandGroup(replacing: .textEditing) {
-            Button("Find…") { reader?.searchFocusRequest += 1 }
-                .keyboardShortcut("f")
-                .disabled(reader == nil)
+            Button("Find…") {
+                if let reader {
+                    reader.searchFocusRequest += 1
+                } else {
+                    librarySearch?.request += 1
+                }
+            }
+            .keyboardShortcut("f")
+            .disabled(reader == nil && librarySearch == nil)
             Button("Find Next") { reader?.selectNextResult() }
                 .keyboardShortcut("g")
                 .disabled(reader?.searchResults.isEmpty ?? true)

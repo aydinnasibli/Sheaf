@@ -37,17 +37,17 @@ final class ReaderModel {
 
     // MARK: Private
 
-    @ObservationIgnored private let fileURL: URL?
-    @ObservationIgnored private let positionStore: ReadingPositionStore
+    /// The library entry for this PDF, where the reading position is kept.
+    /// `nil` for PDFs that aren't files on disk.
+    @ObservationIgnored let libraryItem: LibraryEntry?
     @ObservationIgnored private var hasRestoredPosition = false
     @ObservationIgnored private var activeQuery = ""
     @ObservationIgnored private var seenMatches = Set<MatchKey>()
     @ObservationIgnored nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
-    init(document: PDFDocument, fileURL: URL?, positionStore: ReadingPositionStore = .shared) {
+    init(document: PDFDocument, libraryItem: LibraryEntry?) {
         self.document = document
-        self.fileURL = fileURL
-        self.positionStore = positionStore
+        self.libraryItem = libraryItem
         self.outline = OutlineItem.items(under: document.outlineRoot)
 
         pdfView.displayMode = .singlePageContinuous
@@ -68,8 +68,7 @@ final class ReaderModel {
     func restoreReadingPosition() {
         guard !hasRestoredPosition else { return }
         hasRestoredPosition = true
-        guard let fileURL,
-              let index = positionStore.pageIndex(for: fileURL),
+        guard let index = libraryItem?.lastPageIndex,
               index > 0, index < pageCount,
               let page = document.page(at: index)
         else { return }
@@ -211,8 +210,8 @@ final class ReaderModel {
         guard let page = pdfView.currentPage else { return }
         currentPageIndex = document.index(for: page)
         // Don't overwrite the saved page with page 1 while the window is still opening.
-        if hasRestoredPosition, let fileURL {
-            positionStore.save(pageIndex: currentPageIndex, for: fileURL)
+        if hasRestoredPosition {
+            libraryItem?.recordPage(currentPageIndex)
         }
     }
 
