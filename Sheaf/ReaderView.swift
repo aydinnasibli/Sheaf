@@ -1,25 +1,32 @@
 import PDFKit
 import SwiftUI
 
-/// The contents of one document window.
+/// The contents of one document window: opens the PDF, asks for a password
+/// if it has one, then shows the reader.
 struct ReaderView: View {
     let data: Data
+    let fileURL: URL?
 
-    private enum LoadState {
+    private enum Phase {
         case loading
-        case loaded(PDFDocument)
+        case locked(PDFDocument)
+        case ready(ReaderModel)
         case failed
     }
 
-    @State private var state = LoadState.loading
+    @State private var phase = Phase.loading
 
     var body: some View {
         Group {
-            switch state {
+            switch phase {
             case .loading:
                 ProgressView()
-            case .loaded(let document):
-                PDFKitView(document: document)
+            case .locked(let document):
+                UnlockView(document: document) {
+                    phase = .ready(ReaderModel(document: document, fileURL: fileURL))
+                }
+            case .ready(let model):
+                DocumentWindow(model: model)
             case .failed:
                 ContentUnavailableView(
                     "Can't Open This PDF",
@@ -28,14 +35,59 @@ struct ReaderView: View {
                 )
             }
         }
-        .frame(minWidth: 480, minHeight: 360)
+        .frame(minWidth: 600, minHeight: 400)
         .task {
             // Parse once per window, not on every view update.
-            if let document = PDFDocument(data: data) {
-                state = .loaded(document)
-            } else {
-                state = .failed
+            guard case .loading = phase else { return }
+            guard let document = PDFDocument(data: data) else {
+                phase = .failed
+                return
             }
+            phase = document.isLocked
+                ? .locked(document)
+                : .ready(ReaderModel(document: document, fileURL: fileURL))
+        }
+    }
+}
+
+/// Asks for the password of an encrypted PDF.
+private struct UnlockView: View {
+    let document: PDFDocument
+    let onUnlock: () -> Void
+
+    @State private var password = ""
+    @State private var didFail = false
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "lock.doc")
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
+            Text("This PDF Is Password-Protected")
+                .font(.title3.weight(.semibold))
+            SecureField("Password", text: $password)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 260)
+                .onSubmit(unlock)
+            if didFail {
+                Text("That password didn't work. Try again.")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+            Button("Unlock", action: unlock)
+                .keyboardShortcut(.defaultAction)
+                .disabled(password.isEmpty)
+        }
+        .padding(32)
+    }
+
+    private func unlock() {
+        guard !password.isEmpty else { return }
+        if document.unlock(withPassword: password) {
+            onUnlock()
+        } else {
+            didFail = true
+            password = ""
         }
     }
 }
