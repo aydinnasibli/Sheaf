@@ -44,15 +44,18 @@ final class WindowRouter {
 
     private func flush() {
         guard let library, let openWindow = openWindowAction else { return }
-        if !pendingURLs.isEmpty {
-            for url in pendingURLs { library.keepAccess(to: url) }
-            pendingEntries += library.add(urls: pendingURLs).map(\.id)
-            pendingURLs.removeAll()
-        }
-        for id in pendingEntries {
+        // Take the queues before opening anything: a new tab calls `attach`,
+        // which flushes again, and must not see the same requests.
+        let urls = pendingURLs
+        pendingURLs.removeAll()
+        for url in urls { library.keepAccess(to: url) }
+        let ids = pendingEntries + library.add(urls: urls).map(\.id)
+        pendingEntries.removeAll()
+
+        var opened = Set<UUID>()
+        for id in ids where opened.insert(id).inserted {
             openWindow(id: "reader", value: id)
         }
-        pendingEntries.removeAll()
     }
 }
 

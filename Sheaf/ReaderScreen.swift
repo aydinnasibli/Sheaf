@@ -103,7 +103,7 @@ private struct ReaderLayout: View {
     var body: some View {
         HStack(spacing: 0) {
             if showsThumbnails && width >= 900 {
-                ThumbnailStrip(model: model)
+                PageStrip(model: model)
                 Hairline(axis: .vertical)
             }
             pageArea
@@ -295,9 +295,12 @@ private struct LayoutSwitch: View {
                     HStack(spacing: 6) {
                         Image(systemName: icon(for: layout)).font(.system(size: 12, weight: .semibold))
                         if isOn {
-                            Text(layout.title).font(.system(size: 12, weight: .semibold))
+                            Text(layout.title)
+                                .font(.system(size: 12, weight: .semibold))
+                                .fixedSize()
                         }
                     }
+                    .fixedSize()
                     .padding(.horizontal, isOn ? 10 : 0)
                     .frame(minWidth: 34)
                     .frame(height: 28)
@@ -371,10 +374,104 @@ private struct ZoomPill: View {
     }
 }
 
-// MARK: - Thumbnails
+// MARK: - Pages and contents
+
+/// The left strip: page thumbnails, or the table of contents when the PDF
+/// has one.
+private struct PageStrip: View {
+    let model: ReaderModel
+    @AppStorage("stripShowsContents") private var showsContents = false
+
+    private var isContents: Bool { showsContents && !model.outlineRows.isEmpty }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if !model.outlineRows.isEmpty {
+                HStack(spacing: 2) {
+                    tab("Pages", selected: !isContents) { showsContents = false }
+                    tab("Contents", selected: isContents) { showsContents = true }
+                }
+                .padding(2)
+                .background(Theme.field, in: RoundedRectangle(cornerRadius: 9))
+                .padding(10)
+                Hairline()
+            }
+            if isContents {
+                ContentsList(model: model)
+            } else {
+                ThumbnailList(model: model)
+            }
+        }
+        .frame(width: isContents ? 260 : 168)
+        .background(Theme.sidebar)
+    }
+
+    private func tab(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: selected ? .semibold : .medium))
+                .foregroundStyle(selected ? Theme.ink : Theme.inkMuted)
+                .frame(maxWidth: .infinity)
+                .frame(height: 26)
+                .background(selected ? Theme.penActive : .clear, in: RoundedRectangle(cornerRadius: 7))
+                .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// The table of contents, indented by level, with the current section marked.
+private struct ContentsList: View {
+    let model: ReaderModel
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(model.outlineRows) { row in
+                        let isCurrent = row.id == model.currentOutlineRowID
+                        Button { model.go(to: row) } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(row.title)
+                                    .font(.system(size: row.depth == 0 ? 13 : 12.5, weight: row.depth == 0 || isCurrent ? .semibold : .regular))
+                                    .foregroundStyle(row.depth == 0 || isCurrent ? Theme.ink : Theme.inkSecondary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                Spacer(minLength: 4)
+                                if let page = row.pageIndex {
+                                    Text(String(page + 1))
+                                        .font(.system(size: 11.5))
+                                        .monospacedDigit()
+                                        .foregroundStyle(Theme.inkMuted)
+                                }
+                            }
+                            .padding(.leading, 10 + CGFloat(min(row.depth, 4)) * 14)
+                            .padding(.trailing, 10)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(isCurrent ? Theme.navSelected : .clear, in: RoundedRectangle(cornerRadius: 7))
+                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(isCurrent ? Theme.control : .clear, lineWidth: 1))
+                            .contentShape(RoundedRectangle(cornerRadius: 7))
+                        }
+                        .buttonStyle(.plain)
+                        .id(row.id)
+                    }
+                }
+                .padding(8)
+            }
+            .onAppear {
+                if let current = model.currentOutlineRowID { proxy.scrollTo(current, anchor: .center) }
+            }
+            .onChange(of: model.currentOutlineRowID) { _, current in
+                if let current { withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(current, anchor: .center) } }
+            }
+        }
+    }
+}
 
 /// Page thumbnails with a marker beside each highlight (C · Reader mockup).
-private struct ThumbnailStrip: View {
+private struct ThumbnailList: View {
     let model: ReaderModel
 
     var body: some View {
@@ -396,12 +493,11 @@ private struct ThumbnailStrip: View {
                 .padding(.vertical, 18)
                 .frame(maxWidth: .infinity)
             }
+            .onAppear { proxy.scrollTo(model.currentPageIndex, anchor: .center) }
             .onChange(of: model.currentPageIndex) { _, index in
                 withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(index, anchor: .center) }
             }
         }
-        .frame(width: 168)
-        .background(Theme.sidebar)
     }
 
     private func isCurrent(_ index: Int) -> Bool {
@@ -583,7 +679,7 @@ private struct FlowChips: View {
     @Bindable var model: ReaderModel
 
     var body: some View {
-        HStack(spacing: 6) {
+        FlowLayout(spacing: 6) {
             ForEach(HighlightKind.allCases) { kind in
                 let isOn = model.panelFilter.contains(kind)
                 Button {
@@ -591,8 +687,8 @@ private struct FlowChips: View {
                 } label: {
                     Text("\(kind.name) \u{00B7} \(model.count(of: kind))")
                         .font(.system(size: 11.5, weight: .semibold))
-                        .lineLimit(1)
-                        .padding(.horizontal, 8)
+                        .fixedSize()
+                        .padding(.horizontal, 9)
                         .frame(height: 26)
                         .foregroundStyle(kind.chipText)
                         .background(kind.chipBackground, in: Capsule())
@@ -604,7 +700,6 @@ private struct FlowChips: View {
                 .accessibilityAddTraits(isOn ? .isSelected : [])
             }
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

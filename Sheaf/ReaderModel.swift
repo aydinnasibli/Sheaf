@@ -35,6 +35,8 @@ final class ReaderModel {
     /// Created once and kept, so the page view survives SwiftUI updates.
     @ObservationIgnored let pdfView = SheafPDFView()
     let outline: [OutlineItem]
+    /// The table of contents as a flat, indented list for the Contents view.
+    let outlineRows: [OutlineRow]
     /// The library entry for this PDF: reading position and highlights.
     @ObservationIgnored let entry: LibraryEntry?
     @ObservationIgnored private let store: LibraryStore?
@@ -45,9 +47,16 @@ final class ReaderModel {
     private(set) var isFitToWindow = true
     var pageCount: Int { document.pageCount }
 
+    /// Single, two pages or scroll. Remembered for the next PDF.
     var layout = PageLayout.scroll {
-        didSet { applyLayout() }
+        didSet {
+            applyLayout()
+            preferences.set(layout.rawValue, forKey: Self.layoutKey)
+        }
     }
+
+    static let layoutKey = "pageLayout"
+    @ObservationIgnored private let preferences: UserDefaults
 
     var isGoToPagePresented = false
     var isSearchBarVisible = false
@@ -81,12 +90,20 @@ final class ReaderModel {
     @ObservationIgnored private var hasUnsavedChanges = false
     @ObservationIgnored nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
-    init(document: PDFDocument, entry: LibraryEntry?, store: LibraryStore?, fileURL: URL?) {
+    init(
+        document: PDFDocument, entry: LibraryEntry?, store: LibraryStore?, fileURL: URL?,
+        preferences: UserDefaults = .standard
+    ) {
         self.document = document
         self.entry = entry
         self.store = store
         self.fileURL = fileURL
+        self.preferences = preferences
         self.outline = OutlineItem.items(under: document.outlineRoot)
+        self.outlineRows = OutlineRow.flatten(outline, in: document)
+        if let saved = preferences.string(forKey: Self.layoutKey), let layout = PageLayout(rawValue: saved) {
+            self.layout = layout
+        }
 
         pdfView.autoScales = true
         pdfView.displaysPageBreaks = true
@@ -161,6 +178,20 @@ final class ReaderModel {
     func go(to item: OutlineItem) {
         guard let destination = item.destination else { return }
         pdfView.go(to: destination)
+    }
+
+    func go(to row: OutlineRow) {
+        if let destination = row.destination {
+            pdfView.go(to: destination)
+        } else if let index = row.pageIndex, let page = document.page(at: index) {
+            pdfView.go(to: page)
+        }
+    }
+
+    /// The contents entry for the section being read: the last one that
+    /// starts on or before the current page.
+    var currentOutlineRowID: OutlineRow.ID? {
+        outlineRows.last { ($0.pageIndex ?? .max) <= currentPageIndex }?.id
     }
 
     // MARK: Zoom
@@ -535,6 +566,35 @@ struct OutlineItem: Identifiable {
     static func items(under parent: PDFOutline?) -> [OutlineItem] {
         guard let parent else { return [] }
         return (0..<parent.numberOfChildren).compactMap { parent.child(at: $0) }.map(OutlineItem.init)
+    }
+}
+
+/// One line in the Contents list: a table-of-contents entry with its depth
+/// and the page it starts on.
+struct OutlineRow: Identifiable {
+    /// Position in the list.
+    let id: Int
+    let title: String
+    let depth: Int
+    let pageIndex: Int?
+    let destination: PDFDestination?
+
+    static func flatten(_ items: [OutlineItem], in document: PDFDocument) -> [OutlineRow] {
+        var rows: [OutlineRow] = []
+        func visit(_ items: [OutlineItem], depth: Int) {
+            for item in items {
+                rows.append(OutlineRow(
+                    id: rows.count,
+                    title: item.title.isEmpty ? "Untitled" : item.title,
+                    depth: depth,
+                    pageIndex: item.destination?.page.map { document.index(for: $0) },
+                    destination: item.destination
+                ))
+                visit(item.children ?? [], depth: depth + 1)
+            }
+        }
+        visit(items, depth: 0)
+        return rows
     }
 }
 

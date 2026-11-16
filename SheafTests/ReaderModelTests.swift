@@ -105,6 +105,12 @@ struct ReaderModelTests {
         #expect(model.outline.map(\.title) == ["Chapter 1"])
         #expect(model.outline.first?.children?.map(\.title) == ["Section 1.1"])
         #expect(model.outline.first?.children?.first?.children == nil)
+
+        // The Contents list: flattened, indented, with start pages.
+        #expect(model.outlineRows.map(\.title) == ["Chapter 1", "Section 1.1"])
+        #expect(model.outlineRows.map(\.depth) == [0, 1])
+        #expect(model.outlineRows.map(\.pageIndex) == [0, 1])
+        #expect(model.currentOutlineRowID == 0)
     }
 
     @Test func emptyOutlineWhenPDFHasNone() {

@@ -23,7 +23,10 @@ struct HighlightTests {
         #expect(TestPDF.make(pages: pages).write(to: url))
         let document = try #require(PDFDocument(url: url))
         let entry = store.recordOpen(of: url, document: document)
-        return (ReaderModel(document: document, entry: entry, store: store, fileURL: url), url)
+        // A throwaway preferences domain, so tests never change the app's saved layout.
+        let preferences = try #require(UserDefaults(suiteName: "SheafTests.\(UUID().uuidString)"))
+        let model = ReaderModel(document: document, entry: entry, store: store, fileURL: url, preferences: preferences)
+        return (model, url)
     }
 
     private func select(_ text: String, in model: ReaderModel) throws {

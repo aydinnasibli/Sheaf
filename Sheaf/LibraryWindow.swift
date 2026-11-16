@@ -150,7 +150,7 @@ struct LibraryWindow: View {
                     .foregroundStyle(Theme.inkMuted)
             }
 
-            HStack(spacing: 6) {
+            FlowLayout(spacing: 6) {
                 ForEach(LibraryFilter.allCases, id: \.self) { option in
                     FilterChip(
                         title: option.title,
@@ -604,7 +604,7 @@ private struct LibraryRow: View {
                     .foregroundStyle(entry.readingStatus == .unread ? Theme.inkMuted : Theme.inkSecondary)
                     .frame(width: width * Columns.read, alignment: .leading)
 
-                Text(entry.lastOpenedAt, format: .relative(presentation: .named))
+                Text(entry.lastOpenedAt, format: .relative(presentation: .named, unitsStyle: .abbreviated))
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.inkMuted)
                     .lineLimit(1)
