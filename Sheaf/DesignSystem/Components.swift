@@ -2,8 +2,9 @@ import SwiftUI
 
 // MARK: - Button feedback
 
-/// Hover and press feedback for Sheaf's own buttons, with the pointing-hand
-/// cursor. Every custom button uses it, so all of them respond the same way.
+/// Hover and press feedback for Sheaf's own buttons. Every custom button uses
+/// it, so all of them respond the same way. The cursor stays the arrow, as in
+/// other Mac apps; the pointing hand is for links.
 struct SheafButtonStyle: ButtonStyle {
     enum Feedback {
         /// A tint behind the label, for buttons on a plain background.
@@ -13,8 +14,8 @@ struct SheafButtonStyle: ButtonStyle {
         case overlay
         /// For buttons filled with the accent color.
         case primary
-        /// No tint, only the cursor and a dim while pressed; for text and
-        /// buttons inside a card that shows its own hover.
+        /// No tint, only a dim while pressed; for text and buttons inside a
+        /// card or row that shows its own hover.
         case quiet
     }
 
@@ -63,7 +64,6 @@ private struct SheafButtonBody: View {
             .animation(Theme.hoverAnimation, value: isHovered)
             .contentShape(shape)
             .onHover { isHovered = $0 }
-            .pointerStyle(isEnabled ? .link : nil)
     }
 }
 

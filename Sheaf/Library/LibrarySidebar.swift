@@ -164,7 +164,7 @@ struct OpenDocumentRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // The row shows its own hover, so the button only adds the cursor.
+            // The row shows its own hover, so the button adds no tint of its own.
             Button(action: open) {
                 HStack(spacing: 10) {
                     Image(systemName: "doc.richtext")
