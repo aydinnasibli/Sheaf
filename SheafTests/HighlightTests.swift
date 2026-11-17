@@ -174,6 +174,43 @@ struct HighlightTests {
         #expect(!model.canGoToPreviousPage)
     }
 
+    @Test func bookmarksAreKeptInTheLibraryAndCanBeUndone() throws {
+        let (model, _) = try makeReader(pages: ["1", "2", "3"])
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        model.undoManager = undo
+
+        undo.beginUndoGrouping()
+        model.toggleBookmark(page: 2)
+        undo.endUndoGrouping()
+        undo.beginUndoGrouping()
+        model.toggleBookmark(page: 0)
+        undo.endUndoGrouping()
+        #expect(model.bookmarks == [0, 2])
+        #expect(model.entry?.bookmarkedPages == [0, 2])
+
+        undo.undo()
+        #expect(model.bookmarks == [2])
+
+        undo.beginUndoGrouping()
+        model.toggleBookmark(page: 2)
+        undo.endUndoGrouping()
+        #expect(model.bookmarks.isEmpty)
+    }
+
+    @Test func printingWithoutHighlightsLeavesThemOutOfACopy() throws {
+        let (model, _) = try makeReader(pages: ["Alpha idea here"])
+        try select("Alpha idea", in: model)
+        model.highlightSelection(as: .keyIdea)
+
+        let withHighlights = sheafAnnotations(in: model.documentForPrinting(includingHighlights: true), page: 0)
+        #expect(!withHighlights.isEmpty)
+        #expect(withHighlights.allSatisfy { $0.shouldPrint })
+        #expect(sheafAnnotations(in: model.documentForPrinting(includingHighlights: false), page: 0).isEmpty)
+        // The PDF on screen keeps its highlights.
+        #expect(!sheafAnnotations(in: model.document, page: 0).isEmpty)
+    }
+
     @Test func theFitModeIsRememberedForTheNextPDF() throws {
         let preferences = try #require(UserDefaults(suiteName: "SheafTests.\(UUID().uuidString)"))
         let first = ReaderModel(document: TestPDF.make(pages: ["One"]), entry: nil, store: nil, fileURL: nil, preferences: preferences)

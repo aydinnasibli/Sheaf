@@ -175,6 +175,8 @@ final class ReaderModel {
         pdfView.onMouseUp = { [weak self] in self?.mouseUpInPage() }
         pdfView.onHighlightKey = { [weak self] kind in self?.highlightKeyPressed(kind) ?? false }
         pdfView.onAppearanceChange = { [weak self] in self?.applyPageColors() }
+        pdfView.onFollowLink = { [weak self] in self?.rememberPlace() }
+        bookmarks = entry?.bookmarkedPages ?? []
 
         if document.isEncrypted {
             fileWriteBlock = .passwordProtected
@@ -254,20 +256,120 @@ final class ReaderModel {
     /// Goes to a 1-based page number, as people type it.
     func goToPage(number: Int) {
         guard (1...max(pageCount, 1)).contains(number), let page = document.page(at: number - 1) else { return }
+        rememberPlace()
         pdfView.go(to: page)
     }
 
     func go(to item: OutlineItem) {
         guard let destination = item.destination else { return }
+        rememberPlace()
         pdfView.go(to: destination)
     }
 
     func go(to row: OutlineRow) {
         if let destination = row.destination {
+            rememberPlace()
             pdfView.go(to: destination)
         } else if let index = row.pageIndex, let page = document.page(at: index) {
+            rememberPlace()
             pdfView.go(to: page)
         }
+    }
+
+    // MARK: Back and forward
+
+    /// Where the reader was before each jump: a link in the PDF, the
+    /// contents, a thumbnail, Go to Page, a search result or a highlight.
+    /// Turning pages and scrolling aren't jumps. (PDFKit's own history counts
+    /// every page turn, so Sheaf keeps its own.)
+    private var backPlaces: [PDFDestination] = []
+    private var forwardPlaces: [PDFDestination] = []
+
+    var canGoBack: Bool { !backPlaces.isEmpty }
+    var canGoForward: Bool { !forwardPlaces.isEmpty }
+
+    /// The page Back returns to (1-based), for the Back button.
+    var backPageNumber: Int? {
+        backPlaces.last?.page.map { document.index(for: $0) + 1 }
+    }
+
+    /// Call just before a jump, so Back can return here.
+    func rememberPlace() {
+        guard hasRestoredPosition, let here = pdfView.currentDestination else { return }
+        backPlaces.append(here)
+        if backPlaces.count > 50 { backPlaces.removeFirst() }
+        forwardPlaces.removeAll()
+    }
+
+    func goBack() {
+        guard let place = backPlaces.popLast() else { return }
+        if let here = pdfView.currentDestination { forwardPlaces.append(here) }
+        pdfView.go(to: place)
+    }
+
+    func goForward() {
+        guard let place = forwardPlaces.popLast() else { return }
+        if let here = pdfView.currentDestination { backPlaces.append(here) }
+        pdfView.go(to: place)
+    }
+
+    // MARK: Bookmarks
+
+    /// Bookmarked pages (0-based), in order.
+    private(set) var bookmarks: [Int] = []
+
+    var isCurrentPageBookmarked: Bool { bookmarks.contains(currentPageIndex) }
+
+    /// Bookmarks the page on screen, or removes its bookmark.
+    func toggleBookmark() { toggleBookmark(page: currentPageIndex) }
+
+    func toggleBookmark(page index: Int) {
+        guard let entry, (0..<pageCount).contains(index) else { return }
+        let wasBookmarked = bookmarks.contains(index)
+        var pages = Set(entry.bookmarkedPages)
+        if wasBookmarked { pages.remove(index) } else { pages.insert(index) }
+        entry.bookmarkedPages = pages.sorted()
+        store?.save()
+        bookmarks = entry.bookmarkedPages
+        registerUndo(wasBookmarked ? "Remove Bookmark" : "Bookmark Page") { $0.toggleBookmark(page: index) }
+    }
+
+    func goToBookmark(_ index: Int) {
+        goToPage(number: index + 1)
+    }
+
+    // MARK: Printing
+
+    /// Prints the PDF, with or without Sheaf's highlights.
+    func printPDF(includingHighlights: Bool) {
+        let printed = documentForPrinting(includingHighlights: includingHighlights)
+        guard let operation = printed.printOperation(for: NSPrintInfo.shared, scalingMode: .pageScaleDownToFit, autoRotate: true) else { return }
+        operation.jobTitle = title
+        if let window = pdfView.window {
+            operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        } else {
+            operation.run()
+        }
+    }
+
+    /// A copy of the PDF to print, so the one on screen is never changed.
+    /// Highlights are marked to print, or left out.
+    func documentForPrinting(includingHighlights: Bool) -> PDFDocument {
+        guard let data = document.dataRepresentation(),
+              let copy = PDFDocument(data: data),
+              !copy.isLocked
+        else { return document }
+        for index in 0..<copy.pageCount {
+            guard let page = copy.page(at: index) else { continue }
+            for annotation in page.annotations where PDFHighlights.id(of: annotation) != nil {
+                if includingHighlights {
+                    annotation.shouldPrint = true
+                } else {
+                    page.removeAnnotation(annotation)
+                }
+            }
+        }
+        return copy
     }
 
     /// The contents entry for the section being read: the last one that
@@ -499,6 +601,7 @@ final class ReaderModel {
 
     func go(to record: HighlightRecord) {
         guard let page = document.page(at: record.pageIndex) else { return }
+        rememberPlace()
         if let rect = record.rects.first {
             pdfView.go(to: rect.insetBy(dx: 0, dy: -40), on: page)
         } else {
@@ -662,6 +765,8 @@ final class ReaderModel {
 
     func selectResult(id: SearchResult.ID) {
         guard searchResults.indices.contains(id) else { return }
+        // Back returns to where the search started, not to each match.
+        if selectedResultID == nil { rememberPlace() }
         let result = searchResults[id]
         selectedResultID = id
         pdfView.setCurrentSelection(result.selection, animate: true)

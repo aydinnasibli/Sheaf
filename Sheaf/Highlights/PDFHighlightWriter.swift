@@ -79,6 +79,8 @@ nonisolated enum PDFHighlightWriter {
             annotation.color = color
             annotation.contents = highlight.note.isEmpty ? nil : highlight.note
             annotation.userName = "Sheaf"
+            // Highlights print, in Sheaf and in other apps (like Preview's).
+            annotation.shouldPrint = true
             annotation.setValue("\(prefix)\(highlight.id.uuidString)-\(line)", forAnnotationKey: idKey)
             return annotation
         }

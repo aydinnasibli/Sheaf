@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import PDFKit
 import Testing
@@ -111,6 +112,37 @@ struct ReaderModelTests {
         #expect(model.outlineRows.map(\.depth) == [0, 1])
         #expect(model.outlineRows.map(\.pageIndex) == [0, 1])
         #expect(model.currentOutlineRowID == 0)
+    }
+
+    @Test func backReturnsToWhereAJumpStartedButIgnoresPageTurns() throws {
+        let document = TestPDF.make(pages: ["1", "2", "3", "4", "5"])
+        let preferences = try #require(UserDefaults(suiteName: "SheafTests.\(UUID().uuidString)"))
+        let model = ReaderModel(document: document, entry: nil, store: nil, fileURL: nil, preferences: preferences)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 500), styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentView = model.pdfView
+        model.layout = .single
+        model.restoreReadingPosition()
+        #expect(!model.canGoBack)
+
+        model.goToNextPage()
+        #expect(!model.canGoBack, "Turning a page isn't a jump")
+
+        model.goToPage(number: 4)
+        #expect(model.backPageNumber == 2)
+
+        model.goBack()
+        #expect(model.pdfView.currentPage == document.page(at: 1))
+        #expect(!model.canGoBack)
+        #expect(model.canGoForward)
+
+        model.goForward()
+        #expect(model.pdfView.currentPage == document.page(at: 3))
+        #expect(model.backPageNumber == 2)
+
+        // A new jump clears Forward.
+        model.goBack()
+        model.goToPage(number: 5)
+        #expect(!model.canGoForward)
     }
 
     @Test func emptyOutlineWhenPDFHasNone() {

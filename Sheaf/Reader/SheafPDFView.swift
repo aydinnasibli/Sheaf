@@ -17,13 +17,28 @@ final class SheafPDFView: PDFView {
         onAppearanceChange?()
     }
 
+    /// A link to another place in the PDF is about to be followed.
+    var onFollowLink: (() -> Void)?
+
     override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 1, isInternalLink(at: event) {
+            onFollowLink?()
+        }
         super.mouseDown(with: event)
         // PDFView tracks text-selection drags inside mouseDown, so the mouse
         // may already be up by the time it returns.
         if NSEvent.pressedMouseButtons & 1 == 0 {
             onMouseUp?()
         }
+    }
+
+    /// Whether the click is on a link to a page in this PDF (not a web link).
+    private func isInternalLink(at event: NSEvent) -> Bool {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let page = page(for: point, nearest: false),
+              let annotation = page.annotation(at: convert(point, to: page))
+        else { return false }
+        return annotation.destination != nil || annotation.action is PDFActionGoTo
     }
 
     override func mouseUp(with event: NSEvent) {

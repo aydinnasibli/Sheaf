@@ -113,6 +113,7 @@ struct ThumbnailList: View {
                             page: model.document.page(at: index),
                             number: index + 1,
                             isCurrent: isCurrent(index),
+                            isBookmarked: model.bookmarks.contains(index),
                             markers: model.markers(onPage: index)
                         ) {
                             model.goToPage(number: index + 1)
@@ -152,6 +153,7 @@ struct ThumbnailCell: View {
     let page: PDFPage?
     let number: Int
     let isCurrent: Bool
+    var isBookmarked = false
     let markers: [(position: Double, kind: HighlightKind)]
     let action: () -> Void
 
@@ -192,6 +194,17 @@ struct ThumbnailCell: View {
                 )
                 .shadow(color: .black.opacity(isCurrent ? 0 : 0.14), radius: 2, y: 1)
                 .animation(Theme.hoverAnimation, value: isHovered)
+                .overlay(alignment: .topLeading) {
+                    // A ribbon beside bookmarked pages, in the margin so it
+                    // shows against the sidebar in Light and Dark Mode.
+                    if isBookmarked {
+                        Image(systemName: "bookmark.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                            .offset(x: -16)
+                            .accessibilityHidden(true)
+                    }
+                }
                 .overlay(alignment: .topTrailing) {
                     ForEach(Array(markers.enumerated()), id: \.offset) { _, marker in
                         Capsule()
@@ -208,7 +221,7 @@ struct ThumbnailCell: View {
         }
         .buttonStyle(.sheaf(.quiet, in: Rectangle()))
         .onHover { isHovered = $0 }
-        .accessibilityLabel("Page \(number)")
+        .accessibilityLabel(isBookmarked ? "Page \(number), bookmarked" : "Page \(number)")
         .task {
             image = page?.thumbnail(of: CGSize(width: 216, height: 320), for: .cropBox)
         }

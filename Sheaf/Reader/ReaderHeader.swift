@@ -141,6 +141,13 @@ struct PagePill: View {
             PillIconButton(label: "Next page", systemImage: sideways ? "chevron.right" : "chevron.down", isEnabled: model.canGoToNextPage) {
                 model.goToNextPage()
             }
+            PillIconButton(
+                label: model.isCurrentPageBookmarked ? "Remove this page\u{2019}s bookmark (\u{2318}D)" : "Bookmark this page (\u{2318}D)",
+                systemImage: model.isCurrentPageBookmarked ? "bookmark.fill" : "bookmark",
+                isEnabled: model.entry != nil
+            ) {
+                model.toggleBookmark()
+            }
         }
     }
 }

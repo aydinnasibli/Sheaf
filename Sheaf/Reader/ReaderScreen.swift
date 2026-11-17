@@ -193,6 +193,27 @@ struct ReaderLayout: View {
                 }
                 .animation(Theme.motion, value: model.isSearchBarVisible)
             }
+            .overlay(alignment: .bottomLeading) {
+                ZStack {
+                    if let page = model.backPageNumber {
+                        Button(action: model.goBack) {
+                            Label("Back to page \(page)", systemImage: "arrow.uturn.backward")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(Theme.ink)
+                                .padding(.horizontal, 12)
+                                .frame(height: 32)
+                                .background(Theme.raised, in: Capsule())
+                                .overlay(Capsule().strokeBorder(Theme.control, lineWidth: 1))
+                        }
+                        .buttonStyle(.sheaf(.overlay, in: Capsule()))
+                        .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+                        .help("Go back to where you were (\u{2318}[)")
+                        .padding(14)
+                        .transition(.opacity)
+                    }
+                }
+                .animation(Theme.motion, value: model.backPageNumber)
+            }
             .overlay(alignment: .bottom) {
                 ZStack {
                     if let error = model.saveError {

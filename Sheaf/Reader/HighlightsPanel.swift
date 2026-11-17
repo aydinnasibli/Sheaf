@@ -20,6 +20,10 @@ struct HighlightsPanel: View {
 
             HighlightFilterChips(model: model)
 
+            if !model.bookmarks.isEmpty {
+                BookmarkChips(model: model)
+            }
+
             if let block = model.fileWriteBlock {
                 Label(block.explanation, systemImage: "lock")
                     .font(.system(size: 12))
@@ -80,6 +84,38 @@ struct HighlightsPanel: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             try? text.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+}
+
+/// The bookmarked pages; click one to go there.
+struct BookmarkChips: View {
+    let model: ReaderModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionLabel(title: "Bookmarks")
+            FlowLayout(spacing: 6) {
+                ForEach(model.bookmarks, id: \.self) { index in
+                    let isHere = model.visiblePageIndices.contains(index)
+                    Button { model.goToBookmark(index) } label: {
+                        Label("Page \(index + 1)", systemImage: "bookmark.fill")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                            .fixedSize()
+                            .padding(.horizontal, 9)
+                            .frame(height: 26)
+                            .background(Theme.field, in: Capsule())
+                            .overlay(Capsule().strokeBorder(isHere ? Theme.accent : .clear, lineWidth: 1.5))
+                    }
+                    .buttonStyle(.sheaf(.overlay, in: Capsule()))
+                    .help("Go to page \(index + 1)")
+                    .accessibilityLabel("Bookmark, page \(index + 1)")
+                    .contextMenu {
+                        Button("Remove Bookmark") { model.toggleBookmark(page: index) }
+                    }
+                }
+            }
         }
     }
 }

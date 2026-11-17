@@ -21,6 +21,9 @@ final class LibraryEntry {
     var addedAt: Date
     var lastOpenedAt: Date
     var isStarred = false
+    /// Bookmarked pages (0-based), in order. Kept in Sheaf only: PDF has no
+    /// standard place for page bookmarks.
+    var bookmarkedPages: [Int] = []
     /// A small image of the first page, as PNG.
     @Attribute(.externalStorage) var cover: Data?
     var collection: PDFCollection?

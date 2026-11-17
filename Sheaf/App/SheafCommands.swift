@@ -36,6 +36,16 @@ struct SheafCommands: Commands {
             }
         }
 
+        // File > Print, with or without highlights.
+        CommandGroup(replacing: .printItem) {
+            Button("Print\u{2026}") { reader?.printPDF(includingHighlights: true) }
+                .keyboardShortcut("p")
+                .disabled(reader == nil)
+            Button("Print Without Highlights\u{2026}") { reader?.printPDF(includingHighlights: false) }
+                .keyboardShortcut("p", modifiers: [.command, .option])
+                .disabled(reader == nil)
+        }
+
         // Edit > Find. Replaces the text-editing group, which a reader doesn't need.
         CommandGroup(replacing: .textEditing) {
             Button("Find\u{2026}") {
@@ -144,6 +154,21 @@ struct SheafCommands: Commands {
             Button("Go to Page\u{2026}") { reader?.isGoToPagePresented = true }
                 .keyboardShortcut("g", modifiers: [.command, .option])
                 .disabled(reader == nil)
+            Divider()
+            // Back to where you were before following a link or jumping.
+            Button("Back") { reader?.goBack() }
+                .keyboardShortcut("[")
+                .disabled(!(reader?.canGoBack ?? false))
+            Button("Forward") { reader?.goForward() }
+                .keyboardShortcut("]")
+                .disabled(!(reader?.canGoForward ?? false))
+            Divider()
+            Toggle("Bookmark This Page", isOn: Binding(
+                get: { reader?.isCurrentPageBookmarked ?? false },
+                set: { _ in reader?.toggleBookmark() }
+            ))
+            .keyboardShortcut("d")
+            .disabled(reader?.entry == nil)
         }
     }
 }
