@@ -35,18 +35,31 @@ From the command line:
 xcodebuild -project Sheaf.xcodeproj -scheme Sheaf test
 ```
 
-## Installing on another Mac
+## Installing and updates
 
 Every push to `main` builds Sheaf on GitHub, runs the tests and publishes the app
 on the repo's **Releases** page as `Sheaf.zip` (the five newest builds are kept).
+
+Installing, once:
 
 1. Download `Sheaf.zip` from the newest release, open it, and drag **Sheaf** into Applications.
 2. The first time, macOS says it can't check Sheaf for malware, because the app isn't
    notarized by Apple. Click **Done**, open **System Settings › Privacy & Security**,
    and click **Open Anyway** next to Sheaf.
 
-To update, do the same with a newer build and choose **Replace**. The library,
-highlights and notes are kept: they live in Sheaf's own storage, not inside the app.
+After that, Sheaf updates itself. When it opens, and every hour while it's open, it
+checks the newest release; if there's a newer build it offers to install it, and
+**Sheaf › Check for Updates…** checks right away. The library, highlights and notes
+are kept: they live in Sheaf's own storage, not inside the app. Builds run from Xcode
+never check for updates.
+
+How it works: the app uses [Sparkle](https://sparkle-project.org). Each release also
+contains `appcast.xml` (made by `Scripts/make-appcast.sh`), which describes the build
+and carries an EdDSA signature of the zip. Sheaf installs a download only if that
+signature matches the public key in `Info.plist` (`SUPublicEDKey`). The private key
+is the repo secret `SPARKLE_PRIVATE_KEY`, with a copy in the developer's login keychain
+(account `sheaf`). Without it no update can be published, so keep the keychain copy:
+`generate_keys --account sheaf -x <file>` exports it again.
 
 ## Project structure
 
@@ -59,7 +72,7 @@ Sheaf/
 ├── SheafApp.swift      App entry point: the window and its menus
 ├── Info.plist          Document types (PDF) and app settings
 ├── Sheaf.entitlements  Sandbox permissions
-├── App/                Window, workspace of open PDFs, menu commands, app delegate
+├── App/                Window, workspace of open PDFs, menu commands, app delegate, updater
 ├── Library/            Library screen: sidebar, PDF list, Highlights page, recent highlights
 ├── Reader/             Reader screen: header, page strip, highlights panel, search, model
 ├── Highlights/         Writing highlights into PDF files (in the background)
@@ -67,13 +80,14 @@ Sheaf/
 ├── DesignSystem/       Colors, type, wordmark, shared buttons and layouts
 └── Resources/          App icon, asset catalog, Space Grotesk font
 SheafTests/             Swift Testing tests; shared helpers in Support/
-Scripts/                Developer scripts (regenerating the app icon)
+Scripts/                Developer scripts (app icon, update feed)
 ```
 
 ## Tech stack
 
 Swift 6 · SwiftUI with some AppKit · PDFKit · SwiftData · Swift Testing.
-No third-party code dependencies.
+One third-party dependency: [Sparkle](https://github.com/sparkle-project/Sparkle)
+for updates, added with Swift Package Manager.
 
 ## Scripts
 
@@ -85,7 +99,12 @@ swift Scripts/make-app-icon.swift Sheaf/Resources/Assets.xcassets/AppIcon.appico
 
 The icon set's `Contents.json` expects files named `icon_16.png` … `icon_1024.png`.
 
+`Scripts/make-appcast.sh` writes the update feed for a build; the GitHub workflow
+runs it, so it isn't needed by hand.
+
 ## Credits
 
 [Space Grotesk](https://github.com/floriankarsten/space-grotesk) by Florian Karsten,
 licensed under the SIL Open Font License 1.1 (`Sheaf/Resources/Fonts/SpaceGrotesk-OFL.txt`).
+
+[Sparkle](https://github.com/sparkle-project/Sparkle), licensed under the MIT License.

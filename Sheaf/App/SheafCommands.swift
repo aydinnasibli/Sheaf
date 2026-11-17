@@ -12,6 +12,12 @@ struct SheafCommands: Commands {
     @AppStorage("showsHighlightsPanel") private var showsHighlightsPanel = true
 
     var body: some Commands {
+        // Sheaf > Check for Updates…, under About Sheaf as in other Mac apps.
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates\u{2026}") { Updater.shared.checkForUpdates() }
+                .disabled(!Updater.shared.canCheckForUpdates)
+        }
+
         // File: Open replaces New, since Sheaf doesn't create PDFs.
         CommandGroup(replacing: .newItem) {
             Button("Open\u{2026}") { WindowRouter.shared.showOpenPanel() }

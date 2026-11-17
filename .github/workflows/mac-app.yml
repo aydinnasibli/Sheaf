@@ -1,7 +1,8 @@
 # Builds Sheaf on every push to main and publishes it as a GitHub release in
-# this repo, ready to download and install. No Apple account or secrets
-# needed: the app is signed to run locally ("ad-hoc"), and GitHub provides
-# the release token.
+# this repo: Sheaf.zip to install by hand, and appcast.xml, which installed
+# copies of Sheaf read to offer the update (Sparkle; see Sheaf/App/Updater.swift).
+# No Apple account needed: the app is signed to run locally ("ad-hoc"), and
+# each zip is signed with the EdDSA key in the SPARKLE_PRIVATE_KEY secret.
 name: Mac app
 
 on:
@@ -25,8 +26,7 @@ jobs:
   build:
     # Only main is published; the newest release is the one to install.
     if: github.ref == 'refs/heads/main'
-    # GitHub's Xcode 27 image (a preview). Mac minutes count ten times
-    # against the free allowance, so the job is kept short.
+    # GitHub's Xcode 27 image (a preview).
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -45,19 +45,36 @@ jobs:
           xcodebuild -quiet -project Sheaf.xcodeproj -scheme Sheaf \
             -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" test
 
-      # The build number goes into the app, so About Sheaf shows which
-      # build is installed.
+      # The build number goes into the app: Sparkle compares it to decide
+      # whether a build is newer, and About Sheaf shows it.
       - name: Build release app
         run: |
           xcodebuild -quiet -project Sheaf.xcodeproj -scheme Sheaf \
             -configuration Release -derivedDataPath "$DERIVED_DATA" \
+            -destination 'platform=macOS,arch=arm64' \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" build
           APP="$DERIVED_DATA/Build/Products/Release/Sheaf.app"
           codesign --verify --deep --strict "$APP"
-          # ditto keeps the app's signature intact inside the zip.
-          ditto -c -k --keepParent "$APP" Sheaf.zip
+          # ditto keeps the app's signature and symlinks intact inside the zip.
+          ditto -c -k --sequesterRsrc --keepParent "$APP" Sheaf.zip
           VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
+      - name: Sign the update
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "The SPARKLE_PRIVATE_KEY secret is missing: installed copies of Sheaf would reject this build."
+            exit 1
+          fi
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/build-$BUILD_NUMBER/Sheaf.zip"
+          Scripts/make-appcast.sh "$APP" Sheaf.zip "$URL" "${NOTES:-Manual build}" \
+            "$DERIVED_DATA/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update" > appcast.xml
+          xmllint --noout appcast.xml
+          cat appcast.xml
 
       - name: Publish release
         env:
@@ -74,7 +91,8 @@ jobs:
           LATEST=--latest
           if [ -n "$NEWEST" ] && [ "$NEWEST" -gt "$BUILD_NUMBER" ]; then LATEST=--latest=false; fi
           # --target: tag the commit that was built, not whatever main is now.
-          gh release create "$TAG" Sheaf.zip \
+          # Sheaf reads appcast.xml from the newest ("latest") release.
+          gh release create "$TAG" Sheaf.zip appcast.xml \
             --target "$GITHUB_SHA" \
             --title "Sheaf $VERSION (build $BUILD_NUMBER)" \
             --notes "${NOTES:-Manual build}" \

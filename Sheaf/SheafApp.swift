@@ -26,6 +26,8 @@ struct SheafApp: App {
         _workspace = State(initialValue: workspace)
         WindowRouter.shared.library = library
         WindowRouter.shared.workspace = workspace
+        // Start checking for new builds as soon as Sheaf opens.
+        _ = Updater.shared
     }
 
     var body: some Scene {

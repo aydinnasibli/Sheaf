@@ -19,5 +19,15 @@
 			</array>
 		</dict>
 	</array>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/aydinnasibli/Sheaf/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>kWtAzkVP9oWP3hNxp30fZOUXBrmSuM7us6foXnUSFNg=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
 </dict>
 </plist>
