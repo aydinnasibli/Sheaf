@@ -13,38 +13,39 @@ func render(size: Int) -> Data {
     ctx.scaleBy(x: s, y: s)
 
     // macOS icon shape: 824-point rounded square, centered, with a soft drop shadow.
+    // Shadows are drawn in pixels, not in the scaled canvas, so their sizes are multiplied by `s`.
     let tile = CGRect(x: 100, y: 100, width: 824, height: 824)
     let tilePath = CGPath(roundedRect: tile, cornerWidth: 185, cornerHeight: 185, transform: nil)
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: color(0x000000, 0.35))
+    ctx.setShadow(offset: CGSize(width: 0, height: -12 * s), blur: 28 * s, color: color(0x000000, 0.35))
     ctx.addPath(tilePath); ctx.setFillColor(color(0x161616)); ctx.fillPath()
     ctx.restoreGState()
     ctx.addPath(tilePath); ctx.setStrokeColor(color(0xFFFFFF, 0.08)); ctx.setLineWidth(4); ctx.strokePath()
 
-    // The page.
-    let page = CGRect(x: 262, y: 196, width: 500, height: 632)
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 24, color: color(0x000000, 0.45))
-    ctx.addPath(CGPath(roundedRect: page, cornerWidth: 34, cornerHeight: 34, transform: nil))
-    ctx.setFillColor(color(0xF7F7F5)); ctx.fillPath()
-    ctx.restoreGState()
-
-    // Text lines, some highlighted in the four Sheaf colors.
-    let left: CGFloat = 322, lineH: CGFloat = 22
-    let rows: [(width: CGFloat, highlight: UInt32?)] = [
-        (380, 0xFFD43B), (300, nil), (380, 0xFF8FAB), (340, nil), (380, 0x74C0FC), (260, 0x8CE99A)
+    // A sheaf of pages: four sheets in the highlighter colors fanned out behind
+    // the white page you're reading, all turning around one point below them.
+    let sheet = CGRect(x: 362, y: 312, width: 300, height: 440)
+    let pivot = CGPoint(x: 512, y: 252)
+    let sheets: [(degrees: CGFloat, fill: UInt32)] = [
+        (22, 0xFFD43B), (-22, 0x8CE99A), (11, 0xFF8FAB), (-11, 0x74C0FC), (0, 0xF7F7F5)
     ]
-    var y: CGFloat = 724
-    for row in rows {
-        if let hl = row.highlight {
-            let band = CGRect(x: left - 16, y: y - 24, width: row.width + 32, height: lineH + 48)
-            ctx.addPath(CGPath(roundedRect: band, cornerWidth: 20, cornerHeight: 20, transform: nil))
-            ctx.setFillColor(color(hl)); ctx.fillPath()
-        }
-        let line = CGRect(x: left, y: y, width: row.width, height: lineH)
-        ctx.addPath(CGPath(roundedRect: line, cornerWidth: 11, cornerHeight: 11, transform: nil))
-        ctx.setFillColor(color(row.highlight == nil ? 0xC9C9C6 : 0x1E1E1E, row.highlight == nil ? 1 : 0.82)); ctx.fillPath()
-        y -= 92
+    for (degrees, fill) in sheets {
+        var turn = CGAffineTransform(translationX: pivot.x, y: pivot.y)
+            .rotated(by: degrees * .pi / 180)
+            .translatedBy(x: -pivot.x, y: -pivot.y)
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -6 * s), blur: 18 * s, color: color(0x000000, 0.3))
+        ctx.addPath(CGPath(roundedRect: sheet, cornerWidth: 28, cornerHeight: 28, transform: &turn))
+        ctx.setFillColor(color(fill)); ctx.fillPath()
+        ctx.restoreGState()
+    }
+
+    // Lines of text on the front page.
+    let lines: [(y: CGFloat, width: CGFloat)] = [(666, 204), (610, 160), (554, 204), (498, 120)]
+    for line in lines {
+        let rect = CGRect(x: 410, y: line.y, width: line.width, height: 22)
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 11, cornerHeight: 11, transform: nil))
+        ctx.setFillColor(color(0xCFCFCB)); ctx.fillPath()
     }
 
     let image = ctx.makeImage()!
