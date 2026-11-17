@@ -1,0 +1,85 @@
+# Builds Sheaf on every push to main and publishes it as a GitHub release in
+# this repo, ready to download and install. No Apple account or secrets
+# needed: the app is signed to run locally ("ad-hoc"), and GitHub provides
+# the release token.
+name: Mac app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mac-app
+  cancel-in-progress: false
+
+env:
+  BUILD_NUMBER: ${{ github.run_number }}
+  # The same Xcode as on the Mac Sheaf is developed on.
+  XCODE_APP: /Applications/Xcode_27.2.app
+
+jobs:
+  build:
+    # Only main is published; the newest release is the one to install.
+    if: github.ref == 'refs/heads/main'
+    # GitHub's Xcode 27 image (a preview). Mac minutes count ten times
+    # against the free allowance, so the job is kept short.
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$XCODE_APP"
+          xcodebuild -version
+          echo "DERIVED_DATA=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
+
+      # -quiet prints only warnings, errors and failing tests.
+      - name: Test
+        timeout-minutes: 15
+        run: |
+          xcodebuild -quiet -project Sheaf.xcodeproj -scheme Sheaf \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" test
+
+      # The build number goes into the app, so About Sheaf shows which
+      # build is installed.
+      - name: Build release app
+        run: |
+          xcodebuild -quiet -project Sheaf.xcodeproj -scheme Sheaf \
+            -configuration Release -derivedDataPath "$DERIVED_DATA" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" build
+          APP="$DERIVED_DATA/Build/Products/Release/Sheaf.app"
+          codesign --verify --deep --strict "$APP"
+          # ditto keeps the app's signature intact inside the zip.
+          ditto -c -k --keepParent "$APP" Sheaf.zip
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          TAG="build-$BUILD_NUMBER"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "$TAG is already published (a re-run); nothing to do."
+            exit 0
+          fi
+          # A re-run of an old build must not become "latest" over a newer one.
+          NEWEST=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | sed -n 's/^build-//p' | sort -n | tail -1)
+          LATEST=--latest
+          if [ -n "$NEWEST" ] && [ "$NEWEST" -gt "$BUILD_NUMBER" ]; then LATEST=--latest=false; fi
+          # --target: tag the commit that was built, not whatever main is now.
+          gh release create "$TAG" Sheaf.zip \
+            --target "$GITHUB_SHA" \
+            --title "Sheaf $VERSION (build $BUILD_NUMBER)" \
+            --notes "${NOTES:-Manual build}" \
+            $LATEST
+          # Keep the 5 newest builds.
+          gh release list --limit 100 --json tagName --jq '.[].tagName' \
+            | grep '^build-' | sort -t- -k2 -n -r | tail -n +6 \
+            | xargs -r -I{} gh release delete {} --yes --cleanup-tag

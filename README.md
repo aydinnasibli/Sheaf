@@ -35,6 +35,19 @@ From the command line:
 xcodebuild -project Sheaf.xcodeproj -scheme Sheaf test
 ```
 
+## Installing on another Mac
+
+Every push to `main` builds Sheaf on GitHub, runs the tests and publishes the app
+on the repo's **Releases** page as `Sheaf.zip` (the five newest builds are kept).
+
+1. Download `Sheaf.zip` from the newest release, open it, and drag **Sheaf** into Applications.
+2. The first time, macOS says it can't check Sheaf for malware, because the app isn't
+   notarized by Apple. Click **Done**, open **System Settings › Privacy & Security**,
+   and click **Open Anyway** next to Sheaf.
+
+To update, do the same with a newer build and choose **Replace**. The library,
+highlights and notes are kept: they live in Sheaf's own storage, not inside the app.
+
 ## Project structure
 
 Code is organized by feature, following Apple's sample projects
