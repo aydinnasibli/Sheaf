@@ -10,6 +10,7 @@ struct SheafCommands: Commands {
 
     @AppStorage("showsThumbnails") private var showsThumbnails = true
     @AppStorage("showsHighlightsPanel") private var showsHighlightsPanel = true
+    @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
 
     var body: some Commands {
         // Sheaf > Check for Updates…, under About Sheaf as in other Mac apps.
@@ -67,15 +68,32 @@ struct SheafCommands: Commands {
                 ))
                 .disabled(reader == nil)
             }
+            Toggle("Book Spreads (Cover on Its Own)", isOn: Binding(
+                get: { reader?.showsBookSpreads ?? false },
+                set: { reader?.showsBookSpreads = $0 }
+            ))
+            .disabled(!(reader?.layout.showsPairs ?? false))
             Divider()
             Button("Actual Size") { reader?.zoomToActualSize() }
                 .keyboardShortcut("0")
-            Button("Zoom to Fit") { reader?.zoomToFit() }
-                .keyboardShortcut("9")
+            Toggle("Fit Page", isOn: Binding(
+                get: { reader?.zoomMode == .fitPage },
+                set: { _ in reader?.zoomToFit() }
+            ))
+            .keyboardShortcut("9")
+            .disabled(reader == nil)
+            Toggle("Fit Width", isOn: Binding(
+                get: { reader?.zoomMode == .fitWidth },
+                set: { _ in reader?.zoomToWidth() }
+            ))
+            .keyboardShortcut("8")
+            .disabled(reader == nil)
             Button("Zoom In") { reader?.zoomIn() }
                 .keyboardShortcut("+")
             Button("Zoom Out") { reader?.zoomOut() }
                 .keyboardShortcut("-")
+            Divider()
+            Toggle("Dark Pages in Dark Mode", isOn: $darkPages)
             Divider()
             Toggle("Show Pages and Contents", isOn: $showsThumbnails)
                 .keyboardShortcut("1", modifiers: [.command, .option])

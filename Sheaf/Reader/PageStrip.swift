@@ -131,7 +131,20 @@ struct ThumbnailList: View {
     }
 
     private func isCurrent(_ index: Int) -> Bool {
-        index == model.currentPageIndex || (model.layout == .twoPages && index == model.currentPageIndex + 1)
+        model.visiblePageIndices.contains(index)
+    }
+}
+
+private extension View {
+    /// Dark Pages for a thumbnail: inverted, with hues turned back so
+    /// highlights keep their color, and softened like the page.
+    @ViewBuilder
+    func colorInvert(_ isOn: Bool) -> some View {
+        if isOn {
+            colorInvert().hueRotation(.degrees(180)).contrast(0.8)
+        } else {
+            self
+        }
     }
 }
 
@@ -144,6 +157,11 @@ struct ThumbnailCell: View {
 
     @State private var image: NSImage?
     @State private var isHovered = false
+    @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Thumbnails follow Dark Pages, like the page itself.
+    private var isDarkPage: Bool { darkPages && colorScheme == .dark }
 
     private var size: CGSize {
         guard let bounds = page?.bounds(for: .cropBox), bounds.width > 0 else { return CGSize(width: 108, height: 140) }
@@ -163,6 +181,7 @@ struct ThumbnailCell: View {
                 }
                 .frame(width: size.width, height: size.height)
                 .background(.white)
+                .colorInvert(isDarkPage)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 // The current page has the accent ring; the page under the pointer a lighter one.
                 .overlay(

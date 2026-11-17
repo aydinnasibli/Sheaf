@@ -9,6 +9,13 @@ final class SheafPDFView: PDFView {
     var onHighlightKey: ((HighlightKind) -> Bool)?
     /// Esc in the page. Return true if it was used (it ends focus mode).
     var onEscape: (() -> Bool)?
+    /// Light or Dark Mode changed (dark pages follow it).
+    var onAppearanceChange: (() -> Void)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onAppearanceChange?()
+    }
 
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)

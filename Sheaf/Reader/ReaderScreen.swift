@@ -100,6 +100,7 @@ struct ReaderLayout: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("showsThumbnails") private var showsThumbnails = true
     @AppStorage("showsHighlightsPanel") private var showsPanel = true
+    @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
     @State private var width: CGFloat = 1280
     @State private var pageEntry = ""
     @FocusState private var isSearchFocused: Bool
@@ -156,8 +157,11 @@ struct ReaderLayout: View {
         } message: {
             Text("Enter a page number from 1 to \(model.pageCount).")
         }
+        .onChange(of: darkPages) { model.applyPageColors() }
         .task {
             model.undoManager = undoManager
+            // Dark Pages may have been switched while another PDF was on screen.
+            model.applyPageColors()
             model.restoreReadingPosition()
             model.pdfView.onEscape = { [workspace] in
                 guard workspace.isFocusMode else { return false }

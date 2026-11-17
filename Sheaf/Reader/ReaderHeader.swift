@@ -114,6 +114,7 @@ struct LayoutSwitch: View {
         case .single: "rectangle.portrait"
         case .twoPages: "rectangle.split.2x1"
         case .scroll: "rectangle.split.1x2"
+        case .twoPageScroll: "rectangle.split.2x2"
         }
     }
 }
@@ -144,25 +145,45 @@ struct PagePill: View {
     }
 }
 
+/// Zoom out, a menu of page sizes and page options, and zoom in.
 struct ZoomPill: View {
-    let model: ReaderModel
+    @Bindable var model: ReaderModel
+    @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
 
     var body: some View {
         Pill {
             PillIconButton(label: "Zoom out (\u{2318}\u{2212})", systemImage: "minus", action: model.zoomOut)
-            Button {
-                model.isFitToWindow ? model.zoomToActualSize() : model.zoomToFit()
+            Menu {
+                Toggle("Fit Page", isOn: Binding(get: { model.zoomMode == .fitPage }, set: { _ in model.zoomToFit() }))
+                Toggle("Fit Width", isOn: Binding(get: { model.zoomMode == .fitWidth }, set: { _ in model.zoomToWidth() }))
+                Button("Actual Size", action: model.zoomToActualSize)
+                Divider()
+                Toggle("Book Spreads (Cover on Its Own)", isOn: $model.showsBookSpreads)
+                    .disabled(!model.layout.showsPairs)
+                Toggle("Dark Pages in Dark Mode", isOn: $darkPages)
             } label: {
-                Text(model.isFitToWindow ? "Fit" : "\(model.zoomPercent)%")
+                Text(label)
                     .font(.system(size: 13, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(Theme.ink)
                     .frame(minWidth: 44)
+                    .padding(.horizontal, 6)
                     .frame(height: 30)
             }
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
             .buttonStyle(.sheaf(cornerRadius: 7))
-            .help(model.isFitToWindow ? "Actual size (\u{2318}0)" : "Zoom to fit (\u{2318}9)")
+            .fixedSize()
+            .help("Page size and page options")
             PillIconButton(label: "Zoom in (\u{2318}+)", systemImage: "plus", action: model.zoomIn)
+        }
+    }
+
+    private var label: String {
+        switch model.zoomMode {
+        case .fitPage: "Fit page"
+        case .fitWidth: "Fit width"
+        case .custom: "\(model.zoomPercent)%"
         }
     }
 }

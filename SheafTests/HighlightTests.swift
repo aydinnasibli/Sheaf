@@ -161,6 +161,36 @@ struct HighlightTests {
         #expect(model.pdfView.displayMode == .singlePage)
     }
 
+    @Test func bookSpreadsShowTheCoverOnItsOwn() throws {
+        let (model, _) = try makeReader(pages: ["1", "2", "3", "4"])
+        model.layout = .twoPageScroll
+        #expect(model.pdfView.displayMode == .twoUpContinuous)
+        #expect(model.pageLabel == "1\u{2013}2")
+
+        model.showsBookSpreads = true
+        #expect(model.pdfView.displaysAsBook)
+        #expect(model.pageLabel == "1")
+        #expect(model.canGoToNextPage)
+        #expect(!model.canGoToPreviousPage)
+    }
+
+    @Test func theFitModeIsRememberedForTheNextPDF() throws {
+        let preferences = try #require(UserDefaults(suiteName: "SheafTests.\(UUID().uuidString)"))
+        let first = ReaderModel(document: TestPDF.make(pages: ["One"]), entry: nil, store: nil, fileURL: nil, preferences: preferences)
+        // Scrolling pages start out filling the width, as before.
+        #expect(first.layout == .scroll)
+        #expect(first.zoomMode == .fitWidth)
+
+        first.zoomToFit()
+        #expect(first.zoomMode == .fitPage)
+        first.zoomIn()
+        #expect(first.zoomMode == .custom)
+
+        // Zooming in by hand isn't remembered; the last fit mode is.
+        let next = ReaderModel(document: TestPDF.make(pages: ["Two"]), entry: nil, store: nil, fileURL: nil, preferences: preferences)
+        #expect(next.zoomMode == .fitPage)
+    }
+
     // MARK: Undo
 
     @Test func undoAndRedoAHighlight() throws {

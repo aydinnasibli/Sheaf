@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import Observation
 import PDFKit
 
@@ -11,6 +12,7 @@ final class ReaderModel {
         case single
         case twoPages
         case scroll
+        case twoPageScroll
 
         var id: Self { self }
 
@@ -19,6 +21,7 @@ final class ReaderModel {
             case .single: "Single"
             case .twoPages: "Two pages"
             case .scroll: "Scroll"
+            case .twoPageScroll: "Two-page scroll"
             }
         }
 
@@ -27,8 +30,22 @@ final class ReaderModel {
             case .single: "Single Page"
             case .twoPages: "Two Pages"
             case .scroll: "Continuous Scroll"
+            case .twoPageScroll: "Two Pages, Continuous Scroll"
             }
         }
+
+        /// Pages side by side, in pairs.
+        var showsPairs: Bool { self == .twoPages || self == .twoPageScroll }
+    }
+
+    /// How the page is sized in the window.
+    enum ZoomMode: String {
+        /// The whole page (or pair of pages) fits in the window.
+        case fitPage
+        /// The page is as wide as the window; scroll to see the rest.
+        case fitWidth
+        /// A size the reader picked: Actual Size, zooming in or out, pinching.
+        case custom
     }
 
     let document: PDFDocument
@@ -44,7 +61,9 @@ final class ReaderModel {
 
     private(set) var currentPageIndex = 0
     private(set) var zoomPercent = 100
-    private(set) var isFitToWindow = true
+    /// Fit page, fit width, or a size the reader picked. The fit modes are
+    /// remembered for the next PDF.
+    private(set) var zoomMode = ZoomMode.fitPage
     var pageCount: Int { document.pageCount }
 
     /// Single, two pages or scroll. Remembered for the next PDF.
@@ -55,8 +74,24 @@ final class ReaderModel {
         }
     }
 
+    /// In the two-page layouts, shows the cover on its own so the pages
+    /// after it pair up like a printed book's. Remembered for the next PDF.
+    var showsBookSpreads = false {
+        didSet {
+            applyLayout()
+            preferences.set(showsBookSpreads, forKey: Self.bookSpreadsKey)
+        }
+    }
+
     static let layoutKey = "pageLayout"
+    static let zoomModeKey = "zoomMode"
+    static let bookSpreadsKey = "bookSpreads"
+    /// Dark pages with light text while the Mac is in Dark Mode.
+    static let darkPagesKey = "darkPages"
     @ObservationIgnored private let preferences: UserDefaults
+    /// The scale Sheaf last set for a fit mode, to tell it apart from the
+    /// reader zooming (which switches to `.custom`).
+    @ObservationIgnored private var fittedScale: CGFloat?
 
     var isGoToPagePresented = false
     var isSearchBarVisible = false
@@ -123,17 +158,23 @@ final class ReaderModel {
         if let saved = preferences.string(forKey: Self.layoutKey), let layout = PageLayout(rawValue: saved) {
             self.layout = layout
         }
-
-        pdfView.autoScales = true
-        pdfView.displaysPageBreaks = true
-        pdfView.backgroundColor = NSColor(name: nil) { appearance in
-            NSColor(hex: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? 0x0F0F0F : 0xF0F0F0)
+        self.showsBookSpreads = preferences.bool(forKey: Self.bookSpreadsKey)
+        if let saved = preferences.string(forKey: Self.zoomModeKey), let mode = ZoomMode(rawValue: saved), mode != .custom {
+            self.zoomMode = mode
+        } else if !self.layout.showsPairs && self.layout != .single {
+            // Scrolling pages have always filled the width; keep that until the reader picks otherwise.
+            self.zoomMode = .fitWidth
         }
+
+        pdfView.autoScales = false
+        pdfView.displaysPageBreaks = true
         pdfView.document = document
         applyLayout()
+        applyPageColors()
 
         pdfView.onMouseUp = { [weak self] in self?.mouseUpInPage() }
         pdfView.onHighlightKey = { [weak self] kind in self?.highlightKeyPressed(kind) ?? false }
+        pdfView.onAppearanceChange = { [weak self] in self?.applyPageColors() }
 
         if document.isEncrypted {
             fileWriteBlock = .passwordProtected
@@ -182,17 +223,29 @@ final class ReaderModel {
 
     // MARK: Pages
 
-    var canGoToPreviousPage: Bool { currentPageIndex > 0 }
-    var canGoToNextPage: Bool { currentPageIndex < pageCount - (layout == .twoPages ? 2 : 1) }
-
-    /// "4" or, in two-page layout, "4–5".
-    var pageLabel: String {
-        guard pageCount > 0 else { return "0" }
-        let first = currentPageIndex + 1
-        if layout == .twoPages, first < pageCount {
-            return "\(first)–\(first + 1)"
+    /// The pages on screen: one, or a pair in the two-page layouts. With book
+    /// spreads the cover is alone and pairs start on even page numbers.
+    var visiblePageIndices: [Int] {
+        guard pageCount > 0 else { return [] }
+        guard layout.showsPairs else { return [currentPageIndex] }
+        let first: Int
+        if showsBookSpreads {
+            if currentPageIndex == 0 { return [0] }
+            first = currentPageIndex.isMultiple(of: 2) ? currentPageIndex - 1 : currentPageIndex
+        } else {
+            first = currentPageIndex.isMultiple(of: 2) ? currentPageIndex : currentPageIndex - 1
         }
-        return String(first)
+        return first + 1 < pageCount ? [first, first + 1] : [first]
+    }
+
+    var canGoToPreviousPage: Bool { (visiblePageIndices.first ?? 0) > 0 }
+    var canGoToNextPage: Bool { (visiblePageIndices.last ?? 0) < pageCount - 1 }
+
+    /// "4" or, for a pair of pages, "4–5".
+    var pageLabel: String {
+        let pages = visiblePageIndices
+        guard let first = pages.first, let last = pages.last else { return "0" }
+        return first == last ? String(first + 1) : "\(first + 1)\u{2013}\(last + 1)"
     }
 
     func goToPreviousPage() { pdfView.goToPreviousPage(nil) }
@@ -225,16 +278,65 @@ final class ReaderModel {
 
     // MARK: Zoom
 
-    func zoomIn() { pdfView.zoomIn(nil) }
-    func zoomOut() { pdfView.zoomOut(nil) }
+    func zoomIn() {
+        setZoomMode(.custom)
+        pdfView.zoomIn(nil)
+    }
+
+    func zoomOut() {
+        setZoomMode(.custom)
+        pdfView.zoomOut(nil)
+    }
 
     func zoomToActualSize() {
-        pdfView.autoScales = false
+        setZoomMode(.custom)
         pdfView.scaleFactor = 1
     }
 
-    func zoomToFit() {
-        pdfView.autoScales = true
+    /// The whole page, or pair of pages, fits in the window.
+    func zoomToFit() { setZoomMode(.fitPage) }
+
+    /// The page fills the window's width.
+    func zoomToWidth() { setZoomMode(.fitWidth) }
+
+    private func setZoomMode(_ mode: ZoomMode) {
+        zoomMode = mode
+        if mode != .custom {
+            preferences.set(mode.rawValue, forKey: Self.zoomModeKey)
+        }
+        applyZoom()
+    }
+
+    /// Sizes the page for the fit modes. Runs again when the window or the
+    /// layout changes, so the page keeps fitting.
+    func applyZoom() {
+        guard zoomMode != .custom,
+              let page = pdfView.currentPage ?? document.page(at: 0)
+        else { return }
+        let available = pdfView.bounds.size
+        guard available.width > 40, available.height > 40 else { return }
+
+        var pageSize = page.bounds(for: pdfView.displayBox).size
+        if page.rotation % 180 != 0 {
+            pageSize = CGSize(width: pageSize.height, height: pageSize.width)
+        }
+        guard pageSize.width > 0, pageSize.height > 0 else { return }
+
+        // Room for the gap around the pages, and between a pair of pages.
+        let margin: CGFloat = 16
+        let columns: CGFloat = layout.showsPairs ? 2 : 1
+        let widthScale = (available.width - margin * (columns + 1)) / (pageSize.width * columns)
+        let heightScale = (available.height - margin * 2) / pageSize.height
+        let scale = zoomMode == .fitWidth ? widthScale : min(widthScale, heightScale)
+
+        let clamped = min(max(scale, pdfView.minScaleFactor), pdfView.maxScaleFactor)
+        fittedScale = clamped
+        guard abs(pdfView.scaleFactor - clamped) > 0.001 else { return }
+        // Keep the reader's place: rescaling alone would scroll to a different page.
+        let place = pdfView.currentDestination
+        pdfView.scaleFactor = clamped
+        if let place { pdfView.go(to: place) }
+        scaleDidChange()
     }
 
     private func applyLayout() {
@@ -242,11 +344,51 @@ final class ReaderModel {
         case .single: pdfView.displayMode = .singlePage
         case .twoPages: pdfView.displayMode = .twoUp
         case .scroll: pdfView.displayMode = .singlePageContinuous
+        case .twoPageScroll: pdfView.displayMode = .twoUpContinuous
         }
-        pdfView.displaysAsBook = false
-        if pdfView.autoScales {
-            pdfView.autoScales = true
+        pdfView.displaysAsBook = showsBookSpreads
+        applyZoom()
+    }
+
+    // MARK: Page colors
+
+    /// With "Dark Pages" on and the Mac in Dark Mode, pages turn dark gray
+    /// with light gray text. The colors are inverted, turned back around the
+    /// color wheel so highlights keep their hue (yellow stays yellowish), and
+    /// softened so the page isn't pure black and the text not pure white.
+    func applyPageColors() {
+        let isDarkMode = pdfView.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let isDarkPages = isDarkMode && preferences.bool(forKey: Self.darkPagesKey)
+        pdfView.wantsLayer = true
+        pdfView.layerUsesCoreImageFilters = true
+        if isDarkPages, let filters = Self.darkPageFilters() {
+            pdfView.contentFilters = filters
+            // The filters apply to the background too: near-white comes out
+            // a dark gray just lighter than the pages.
+            pdfView.backgroundColor = NSColor(hex: 0xFEFEFE)
+            // Inverted, page shadows would glow.
+            pdfView.pageShadowsEnabled = false
+        } else {
+            pdfView.contentFilters = []
+            pdfView.backgroundColor = NSColor(hex: isDarkMode ? 0x0F0F0F : 0xF0F0F0)
+            pdfView.pageShadowsEnabled = true
         }
+    }
+
+    private static func darkPageFilters() -> [CIFilter]? {
+        guard let invert = CIFilter(name: "CIColorInvert"),
+              let hue = CIFilter(name: "CIHueAdjust"),
+              let soften = CIFilter(name: "CIColorMatrix")
+        else { return nil }
+        hue.setValue(Double.pi, forKey: kCIInputAngleKey)
+        // Core Image works in linear light: white text ends near #D8D8D8,
+        // the black page near #1E1E1E.
+        let scale: CGFloat = 0.673, lift: CGFloat = 0.013
+        soften.setValue(CIVector(x: scale, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        soften.setValue(CIVector(x: 0, y: scale, z: 0, w: 0), forKey: "inputGVector")
+        soften.setValue(CIVector(x: 0, y: 0, z: scale, w: 0), forKey: "inputBVector")
+        soften.setValue(CIVector(x: lift, y: lift, z: lift, w: 0), forKey: "inputBiasVector")
+        return [invert, hue, soften]
     }
 
     // MARK: Highlighting
@@ -598,7 +740,14 @@ final class ReaderModel {
 
     private func scaleDidChange() {
         zoomPercent = Int((pdfView.scaleFactor * 100).rounded())
-        isFitToWindow = pdfView.autoScales
+        // A scale Sheaf didn't set for a fit mode means the reader zoomed (by pinching, say).
+        if zoomMode != .custom, let fittedScale, abs(pdfView.scaleFactor - fittedScale) > 0.001 {
+            zoomMode = .custom
+        }
+    }
+
+    private func frameDidChange() {
+        applyZoom()
     }
 
     private func observeNotifications() {
@@ -610,6 +759,9 @@ final class ReaderModel {
             },
             center.addObserver(forName: .PDFViewScaleChanged, object: pdfView, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.scaleDidChange() }
+            },
+            center.addObserver(forName: NSView.frameDidChangeNotification, object: pdfView, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.frameDidChange() }
             },
             center.addObserver(forName: .PDFDocumentDidFindMatch, object: document, queue: .main) { [weak self] notification in
                 nonisolated(unsafe) let selection = notification.userInfo?["PDFDocumentFoundSelection"] as? PDFSelection
