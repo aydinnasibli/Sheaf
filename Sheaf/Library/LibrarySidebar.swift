@@ -6,6 +6,8 @@ struct LibrarySidebar: View {
     @Environment(LibraryStore.self) private var library
     @Environment(Workspace.self) private var workspace
     @Binding var scope: LibraryScope
+    /// The colors the Highlights and Notes pages show; empty means all.
+    @Binding var highlightKinds: Set<HighlightKind>
     let entries: [LibraryEntry]
     let collections: [PDFCollection]
     let highlights: [HighlightRecord]
@@ -22,10 +24,16 @@ struct LibrarySidebar: View {
                     } action: { scope = .all }
                     NavRow(title: "Highlights", count: highlights.count, isSelected: scope == .highlights) {
                         Image(systemName: "highlighter")
-                    } action: { scope = .highlights }
+                    } action: {
+                        scope = .highlights
+                        highlightKinds = []
+                    }
                     NavRow(title: "Notes", count: highlights.count { !$0.note.isEmpty }, isSelected: scope == .notes) {
                         Image(systemName: "text.bubble")
-                    } action: { scope = .notes }
+                    } action: {
+                        scope = .notes
+                        highlightKinds = []
+                    }
                     NavRow(title: "Starred", count: entries.count(where: \.isStarred), isSelected: scope == .starred) {
                         Image(systemName: "star")
                     } action: { scope = .starred }
@@ -78,29 +86,46 @@ struct LibrarySidebar: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.inkMuted)
                         .padding(.horizontal, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .frame(height: 32)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.sheaf())
                     .accessibilityLabel("New Collection")
                 }
 
-                VStack(alignment: .leading, spacing: 9) {
+                // Each color opens the Highlights page showing only that color.
+                VStack(alignment: .leading, spacing: 2) {
                     SectionLabel(title: "Highlight colors")
                         .padding(.horizontal, 10)
+                        .padding(.bottom, 6)
                     let counts = totalCounts
                     ForEach(Array(HighlightKind.allCases.enumerated()), id: \.element) { index, kind in
-                        HStack(spacing: 10) {
-                            Capsule().fill(kind.swatch).frame(width: 22, height: 10)
-                            Text(kind.name).foregroundStyle(Theme.inkSecondary)
-                            Spacer()
-                            Text(String(counts[index]))
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.inkMuted)
+                        let isSelected = scope == .highlights && highlightKinds == [kind]
+                        Button {
+                            scope = .highlights
+                            highlightKinds = [kind]
+                        } label: {
+                            HStack(spacing: 10) {
+                                Capsule().fill(kind.swatch).frame(width: 22, height: 10)
+                                Text(kind.name)
+                                    .fontWeight(isSelected ? .semibold : .regular)
+                                    .foregroundStyle(isSelected ? Theme.ink : Theme.inkSecondary)
+                                Spacer()
+                                Text(String(counts[index]))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Theme.inkMuted)
+                            }
+                            .font(.system(size: 13))
+                            .padding(.horizontal, 10)
+                            .frame(height: 30)
+                            .background(isSelected ? Theme.navSelected : .clear, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? Theme.control : .clear, lineWidth: 1))
                         }
-                        .font(.system(size: 13))
-                        .padding(.horizontal, 10)
-                        .help("\(kind.purpose). Press \(kind.rawValue) while reading.")
+                        .buttonStyle(.sheaf())
+                        .help("\(kind.purpose). Press \(kind.rawValue) while reading. Click to see these highlights.")
+                        .accessibilityLabel("\(kind.name) highlights")
+                        .accessibilityValue(String(counts[index]))
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
                     }
                 }
             }
@@ -139,6 +164,7 @@ struct OpenDocumentRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            // The row shows its own hover, so the button only adds the cursor.
             Button(action: open) {
                 HStack(spacing: 10) {
                     Image(systemName: "doc.richtext")
@@ -146,19 +172,19 @@ struct OpenDocumentRow: View {
                     Text(title).lineLimit(1)
                     Spacer(minLength: 0)
                 }
-                .contentShape(Rectangle())
+                .frame(maxHeight: .infinity)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.sheaf(.quiet, in: Rectangle()))
             .help("Return to \u{201C}\(title)\u{201D}")
             .accessibilityLabel(title)
             Button(action: close) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle())
+                    .frame(width: 20, height: 20)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.sheaf(cornerRadius: 5))
             .opacity(isHovered ? 1 : 0)
+            .animation(Theme.hoverAnimation, value: isHovered)
             .help("Close \u{201C}\(title)\u{201D}")
             .accessibilityLabel("Close \(title)")
         }
@@ -166,7 +192,8 @@ struct OpenDocumentRow: View {
         .foregroundStyle(Theme.inkSecondary)
         .padding(.horizontal, 10)
         .frame(height: 32)
-        .background(isHovered ? Theme.selectedRow : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .background(isHovered ? Theme.hoverTint : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .animation(Theme.hoverAnimation, value: isHovered)
         .onHover { isHovered = $0 }
     }
 }
@@ -194,9 +221,8 @@ struct NavRow<Icon: View>: View {
             .frame(height: 34)
             .background(isSelected ? Theme.navSelected : .clear, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? Theme.control : .clear, lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.sheaf())
         .accessibilityLabel(title)
         .accessibilityValue(String(count))
         .accessibilityAddTraits(isSelected ? .isSelected : [])

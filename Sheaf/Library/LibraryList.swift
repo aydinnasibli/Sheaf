@@ -36,27 +36,45 @@ struct ColumnHeader: View {
     }
 
     private func header(_ title: String, _ column: LibraryColumn, _ width: CGFloat) -> some View {
-        Button {
+        ColumnHeaderButton(title: title, isSorted: sortColumn == column, ascending: ascending) {
             if sortColumn == column {
                 ascending.toggle()
             } else {
                 sortColumn = column
                 ascending = column == .title || column == .collection
             }
-        } label: {
+        }
+        .frame(width: width, alignment: .leading)
+    }
+}
+
+/// A sortable column title. The text brightens under the pointer, since a
+/// tinted box would sit flush against the column edge.
+private struct ColumnHeaderButton: View {
+    let title: String
+    let isSorted: Bool
+    let ascending: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
             HStack(spacing: 4) {
                 Text(title)
-                if sortColumn == column {
+                if isSorted {
                     Image(systemName: ascending ? "chevron.up" : "chevron.down")
                         .font(.system(size: 8, weight: .bold))
                 }
             }
             .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(sortColumn == column ? Theme.inkSecondary : Theme.inkMuted)
-            .frame(width: width, alignment: .leading)
-            .contentShape(Rectangle())
+            .foregroundStyle(isSorted || isHovered ? Theme.ink : Theme.inkMuted)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .animation(Theme.hoverAnimation, value: isHovered)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.sheaf(.quiet, in: Rectangle()))
+        .onHover { isHovered = $0 }
+        .help(isSorted ? "Reverse the order" : "Sort by \(title)")
         .accessibilityLabel("Sort by \(title)")
     }
 }
@@ -144,6 +162,7 @@ struct LibraryRow: View {
         }
         .padding(.horizontal, -8)
         .contentShape(Rectangle())
+        .animation(Theme.hoverAnimation, value: isHovered)
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)

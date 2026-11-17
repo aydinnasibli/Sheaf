@@ -8,9 +8,9 @@ struct HighlightsPage: View {
     let title: String
     let records: [HighlightRecord]
     let searchText: String
+    /// The colors shown; empty means all. Shared with the sidebar's color rows.
+    @Binding var kinds: Set<HighlightKind>
     let onOpen: (HighlightRecord) -> Void
-
-    @State private var kinds = Set<HighlightKind>()
 
     private var shown: [HighlightRecord] {
         let query = searchText.trimmingCharacters(in: .whitespaces)
@@ -45,28 +45,28 @@ struct HighlightsPage: View {
             }
 
             if shown.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "highlighter")
-                        .font(.system(size: 34, weight: .light))
-                        .foregroundStyle(Theme.inkMuted)
-                    Text(records.isEmpty ? "Nothing here yet" : "No matches")
-                        .font(Theme.display(20))
-                        .foregroundStyle(Theme.ink)
-                    Text(records.isEmpty
-                         ? "Open a PDF, select some text and press 1\u{2013}4. Every highlight you make shows up here."
-                         : "Try another color or search.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.inkMuted)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 340)
+                if records.isEmpty {
+                    EmptyMessage(
+                        systemImage: "highlighter",
+                        title: "Nothing here yet",
+                        message: "Open a PDF, select some text and press 1\u{2013}4. Every highlight you make shows up here."
+                    )
+                } else if kinds.isEmpty {
+                    EmptyMessage(systemImage: "magnifyingglass", title: "No matches", message: "Try another search.")
+                } else {
+                    EmptyMessage(
+                        systemImage: "highlighter",
+                        title: "No matches",
+                        message: "No highlights of \(kinds.count == 1 ? "this color" : "these colors") match.",
+                        actionTitle: "Show All Colors"
+                    ) { kinds = [] }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(shown) { record in
                             Button { onOpen(record) } label: { card(record) }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.sheaf(.overlay, cornerRadius: 12))
                                 .accessibilityLabel(Self.spokenLabel(for: record))
                                 .help("Open \u{201C}\(record.entry?.title ?? "PDF")\u{201D} at page \(record.pageIndex + 1)")
                                 .contextMenu {
@@ -126,6 +126,5 @@ struct HighlightsPage: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .background(record.kind.chipBackground, in: RoundedRectangle(cornerRadius: 12))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
     }
 }

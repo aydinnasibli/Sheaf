@@ -40,6 +40,17 @@ enum Theme {
     /// Text on `accent`.
     static let onAccent = Color(light: 0xFFFFFF, dark: 0x111111)
 
+    // MARK: Interaction
+
+    /// Laid behind or over a control while the pointer is on it.
+    static let hoverTint = Color(light: 0x000000, dark: 0xFFFFFF).opacity(0.06)
+    /// Laid behind or over a control while it's pressed.
+    static let pressTint = Color(light: 0x000000, dark: 0xFFFFFF).opacity(0.11)
+    /// How quickly hover feedback fades in and out.
+    static let hoverAnimation = Animation.easeOut(duration: 0.12)
+    /// Panels, labels and bars that appear or change size.
+    static let motion = Animation.snappy(duration: 0.22)
+
     // MARK: Type
 
     /// Space Grotesk, for headings and the wordmark.

@@ -14,7 +14,7 @@ struct ReaderScreen: View {
         Group {
             switch document.phase {
             case .loading:
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                DelayedProgressView()
             case .locked:
                 UnlockView { document.unlock(with: $0) }
             case .ready(let model):
@@ -58,6 +58,22 @@ struct ReaderScreen: View {
     }
 }
 
+/// A spinner that appears only if loading takes a moment, so quick loads
+/// don't flash it.
+private struct DelayedProgressView: View {
+    @State private var isShown = false
+
+    var body: some View {
+        ProgressView()
+            .opacity(isShown ? 1 : 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .task {
+                try? await Task.sleep(for: .milliseconds(300))
+                withAnimation(Theme.hoverAnimation) { isShown = true }
+            }
+    }
+}
+
 /// Header, thumbnail strip, page and Highlights panel (C · Reader mockup).
 struct ReaderLayout: View {
     @Bindable var model: ReaderModel
@@ -65,6 +81,7 @@ struct ReaderLayout: View {
 
     @Environment(Workspace.self) private var workspace
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("showsThumbnails") private var showsThumbnails = true
     @AppStorage("showsHighlightsPanel") private var showsPanel = true
     @State private var width: CGFloat = 1280
@@ -83,11 +100,14 @@ struct ReaderLayout: View {
                 Group {
                     if model.isShowingSearchResults {
                         SearchResultsPanel(model: model)
+                            .transition(.opacity)
                     } else {
                         HighlightsPanel(model: model)
+                            .transition(.opacity)
                     }
                 }
                 .frame(width: 312)
+                .animation(Theme.motion, value: model.isShowingSearchResults)
             }
         }
         .overlay(alignment: .top) { Hairline() }
@@ -134,22 +154,31 @@ struct ReaderLayout: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.pageCanvas)
             .overlay(alignment: .top) {
-                if model.isSearchBarVisible {
-                    FindBar(model: model, isFocused: $isSearchFocused)
-                        .padding(.top, 12)
+                ZStack {
+                    if model.isSearchBarVisible {
+                        FindBar(model: model, isFocused: $isSearchFocused)
+                            .padding(.top, 12)
+                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                    }
                 }
+                .animation(Theme.motion, value: model.isSearchBarVisible)
             }
             .overlay(alignment: .bottom) {
-                if let error = model.saveError {
-                    Text(error)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.ink)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.control))
-                        .padding(.bottom, 14)
+                ZStack {
+                    if let error = model.saveError {
+                        Text(error)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.ink)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.control))
+                            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+                            .padding(.bottom, 14)
+                            .transition(.opacity)
+                    }
                 }
+                .animation(Theme.motion, value: model.saveError)
             }
     }
 

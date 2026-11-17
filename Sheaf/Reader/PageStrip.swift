@@ -23,6 +23,8 @@ struct PageStrip: View {
                 .padding(10)
                 Hairline()
             }
+            // Switches instantly: animating the strip's width would make the
+            // PDF beside it lay out again on every frame.
             if isContents {
                 ContentsList(model: model)
             } else {
@@ -41,9 +43,8 @@ struct PageStrip: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 26)
                 .background(selected ? Theme.penActive : .clear, in: RoundedRectangle(cornerRadius: 7))
-                .contentShape(RoundedRectangle(cornerRadius: 7))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.sheaf(cornerRadius: 7))
         .accessibilityLabel(title)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -80,9 +81,8 @@ struct ContentsList: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(isCurrent ? Theme.navSelected : .clear, in: RoundedRectangle(cornerRadius: 7))
                             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(isCurrent ? Theme.control : .clear, lineWidth: 1))
-                            .contentShape(RoundedRectangle(cornerRadius: 7))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.sheaf(cornerRadius: 7))
                         .accessibilityLabel(row.pageIndex.map { "\(row.title), page \($0 + 1)" } ?? row.title)
                         .accessibilityAddTraits(isCurrent ? .isSelected : [])
                         .id(row.id)
@@ -143,6 +143,7 @@ struct ThumbnailCell: View {
     let action: () -> Void
 
     @State private var image: NSImage?
+    @State private var isHovered = false
 
     private var size: CGSize {
         guard let bounds = page?.bounds(for: .cropBox), bounds.width > 0 else { return CGSize(width: 108, height: 140) }
@@ -163,8 +164,15 @@ struct ThumbnailCell: View {
                 .frame(width: size.width, height: size.height)
                 .background(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(isCurrent ? Theme.accent : .clear, lineWidth: 2))
+                // The current page has the accent ring; the page under the pointer a lighter one.
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3).strokeBorder(
+                        isCurrent ? Theme.accent : (isHovered ? Theme.inkMuted : .clear),
+                        lineWidth: 2
+                    )
+                )
                 .shadow(color: .black.opacity(isCurrent ? 0 : 0.14), radius: 2, y: 1)
+                .animation(Theme.hoverAnimation, value: isHovered)
                 .overlay(alignment: .topTrailing) {
                     ForEach(Array(markers.enumerated()), id: \.offset) { _, marker in
                         Capsule()
@@ -176,11 +184,11 @@ struct ThumbnailCell: View {
                 Text(String(number))
                     .font(.system(size: 11.5, weight: isCurrent ? .bold : .medium))
                     .monospacedDigit()
-                    .foregroundStyle(isCurrent ? Theme.ink : Theme.inkSecondary)
+                    .foregroundStyle(isCurrent || isHovered ? Theme.ink : Theme.inkSecondary)
             }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.sheaf(.quiet, in: Rectangle()))
+        .onHover { isHovered = $0 }
         .accessibilityLabel("Page \(number)")
         .task {
             image = page?.thumbnail(of: CGSize(width: 216, height: 320), for: .cropBox)

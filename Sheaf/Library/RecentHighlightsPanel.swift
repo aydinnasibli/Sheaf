@@ -19,7 +19,7 @@ struct RecentHighlightsPanel: View {
                     } else {
                         ForEach(records) { record in
                             Button { onSelect(record) } label: { card(record) }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.sheaf(.overlay, cornerRadius: 12))
                                 .accessibilityLabel(HighlightsPage.spokenLabel(for: record))
                                 .help("Open at page \(record.pageIndex + 1)")
                         }
@@ -52,7 +52,6 @@ struct RecentHighlightsPanel: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(record.kind.chipBackground, in: RoundedRectangle(cornerRadius: 12))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
     }
 
     private var guide: some View {

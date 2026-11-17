@@ -1,5 +1,74 @@
 import SwiftUI
 
+// MARK: - Button feedback
+
+/// Hover and press feedback for Sheaf's own buttons, with the pointing-hand
+/// cursor. Every custom button uses it, so all of them respond the same way.
+struct SheafButtonStyle: ButtonStyle {
+    enum Feedback {
+        /// A tint behind the label, for buttons on a plain background.
+        /// Selected buttons with their own fill hide it.
+        case fill
+        /// A tint over the label, for colored cards and chips.
+        case overlay
+        /// For buttons filled with the accent color.
+        case primary
+        /// No tint, only the cursor and a dim while pressed; for text and
+        /// buttons inside a card that shows its own hover.
+        case quiet
+    }
+
+    var feedback: Feedback = .fill
+    var shape: AnyShape = AnyShape(RoundedRectangle(cornerRadius: 8))
+
+    func makeBody(configuration: Configuration) -> some View {
+        SheafButtonBody(configuration: configuration, feedback: feedback, shape: shape)
+    }
+}
+
+extension ButtonStyle where Self == SheafButtonStyle {
+    static func sheaf(_ feedback: SheafButtonStyle.Feedback = .fill, cornerRadius: CGFloat = 8) -> SheafButtonStyle {
+        SheafButtonStyle(feedback: feedback, shape: AnyShape(RoundedRectangle(cornerRadius: cornerRadius)))
+    }
+
+    static func sheaf(_ feedback: SheafButtonStyle.Feedback = .fill, in shape: some Shape) -> SheafButtonStyle {
+        SheafButtonStyle(feedback: feedback, shape: AnyShape(shape))
+    }
+}
+
+private struct SheafButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let feedback: SheafButtonStyle.Feedback
+    let shape: AnyShape
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    private var tint: Color {
+        guard isEnabled else { return .clear }
+        if configuration.isPressed { return feedback == .primary ? Theme.onAccent.opacity(0.22) : Theme.pressTint }
+        if isHovered { return feedback == .primary ? Theme.onAccent.opacity(0.12) : Theme.hoverTint }
+        return .clear
+    }
+
+    var body: some View {
+        configuration.label
+            .background {
+                if feedback == .fill { shape.fill(tint) }
+            }
+            .overlay {
+                if feedback == .overlay || feedback == .primary { shape.fill(tint).allowsHitTesting(false) }
+            }
+            .opacity(feedback == .quiet && configuration.isPressed ? 0.6 : 1)
+            .animation(Theme.hoverAnimation, value: isHovered)
+            .contentShape(shape)
+            .onHover { isHovered = $0 }
+            .pointerStyle(isEnabled ? .link : nil)
+    }
+}
+
+// MARK: - Shapes and lines
+
 /// A 1-point line in the border color.
 struct Hairline: View {
     var axis: Axis = .horizontal
@@ -34,9 +103,8 @@ struct PillIconButton: View {
             Image(systemName: systemImage)
                 .font(.system(size: 12, weight: .semibold))
                 .frame(width: 30, height: 30)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.sheaf(cornerRadius: 7))
         .foregroundStyle(isEnabled ? Theme.ink : Theme.inkMuted)
         .disabled(!isEnabled)
         .help(label)
@@ -59,9 +127,9 @@ struct SquareIconButton: View {
                 .foregroundStyle(isOn ? Theme.onAccent : Theme.ink)
                 .background(isOn ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isOn ? .clear : Theme.control, lineWidth: 1))
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .animation(Theme.hoverAnimation, value: isOn)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.sheaf(isOn ? .primary : .fill))
         .help(label)
         .accessibilityLabel(label)
     }
@@ -72,6 +140,8 @@ struct PrimaryButton: View {
     let title: String
     var systemImage: String?
     let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
@@ -85,10 +155,71 @@ struct PrimaryButton: View {
             .frame(height: 36)
             .foregroundStyle(Theme.onAccent)
             .background(Theme.accent, in: RoundedRectangle(cornerRadius: 10))
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .opacity(isEnabled ? 1 : 0.35)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.sheaf(.primary, cornerRadius: 10))
         .accessibilityLabel(title)
+    }
+}
+
+/// A bordered button for secondary actions, like Export.
+struct SecondaryButton: View {
+    let title: String
+    var systemImage: String?
+    var fillsWidth = false
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 12, weight: .semibold))
+                }
+                Text(title).font(.system(size: 12.5, weight: .semibold))
+            }
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: fillsWidth ? .infinity : nil)
+            .frame(height: 34)
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.control, lineWidth: 1))
+            .opacity(isEnabled ? 1 : 0.45)
+        }
+        .buttonStyle(.sheaf(cornerRadius: 10))
+        .accessibilityLabel(title)
+    }
+}
+
+/// A centered icon, title and explanation for an empty list, with an
+/// optional way out.
+struct EmptyMessage: View {
+    let systemImage: String
+    let title: String
+    let message: String
+    var actionTitle: String?
+    var action: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 32, weight: .light))
+                .foregroundStyle(Theme.inkMuted)
+                .padding(.bottom, 2)
+            Text(title)
+                .font(Theme.display(20))
+                .foregroundStyle(Theme.ink)
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.inkMuted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 340)
+            if let actionTitle, let action {
+                SecondaryButton(title: actionTitle, action: action)
+                    .padding(.top, 6)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -113,9 +244,9 @@ struct FilterChip: View {
             .foregroundStyle(isSelected ? Theme.onAccent : Theme.inkSecondary)
             .background(isSelected ? Theme.accent : .clear, in: Capsule())
             .overlay(Capsule().strokeBorder(isSelected ? .clear : Theme.control, lineWidth: 1))
-            .contentShape(Capsule())
+            .animation(Theme.hoverAnimation, value: isSelected)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.sheaf(isSelected ? .primary : .fill, in: Capsule()))
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

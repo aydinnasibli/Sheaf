@@ -30,11 +30,15 @@ struct FindBar: View {
             PillIconButton(label: "Next match (\u{2318}G)", systemImage: "chevron.down", isEnabled: !model.searchResults.isEmpty) {
                 model.selectNextResult()
             }
-            Button("Done") { model.closeSearch() }
-                .buttonStyle(.plain)
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundStyle(Theme.ink)
-                .padding(.horizontal, 6)
+            Button { model.closeSearch() } label: {
+                Text("Done")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+            }
+            .buttonStyle(.sheaf(cornerRadius: 7))
+            .help("Close search (Esc)")
         }
         .padding(.leading, 12)
         .padding(.trailing, 6)
@@ -84,9 +88,8 @@ struct SearchResultsPanel: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(10)
                             .background(isSelected ? Theme.selectedRow : .clear, in: RoundedRectangle(cornerRadius: 8))
-                            .contentShape(RoundedRectangle(cornerRadius: 8))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.sheaf())
                         .accessibilityLabel("Page \(result.pageLabel): \(String(result.snippet.characters))")
                         .accessibilityAddTraits(isSelected ? .isSelected : [])
                     }

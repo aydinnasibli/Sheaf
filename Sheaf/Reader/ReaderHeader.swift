@@ -59,9 +59,8 @@ struct PenPicker: View {
                     .frame(height: 30)
                     .background(isActive ? Theme.penActive : .clear, in: RoundedRectangle(cornerRadius: 9))
                     .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(isActive ? Theme.accent : .clear, lineWidth: 2))
-                    .contentShape(RoundedRectangle(cornerRadius: 9))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.sheaf(cornerRadius: 9))
                 .help("\(kind.name) highlighter: select text, then press \(kind.rawValue)")
                 .accessibilityLabel("\(kind.name) highlighter")
                 .accessibilityAddTraits(isActive ? .isSelected : [])
@@ -69,6 +68,8 @@ struct PenPicker: View {
         }
         .padding(3)
         .background(Theme.field, in: RoundedRectangle(cornerRadius: 12))
+        // In compact mode the picked pen's name slides open instead of popping in.
+        .animation(Theme.motion, value: model.activePen)
     }
 }
 
@@ -95,9 +96,8 @@ struct LayoutSwitch: View {
                     .frame(height: 28)
                     .foregroundStyle(isOn ? Theme.onAccent : Theme.inkSecondary)
                     .background(isOn ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 7))
-                    .contentShape(RoundedRectangle(cornerRadius: 7))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.sheaf(isOn ? .primary : .fill, cornerRadius: 7))
                 .help(layout.menuTitle)
                 .accessibilityLabel(layout.menuTitle)
                 .accessibilityAddTraits(isOn ? .isSelected : [])
@@ -106,6 +106,7 @@ struct LayoutSwitch: View {
         .padding(2)
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.control, lineWidth: 1))
         .fixedSize()
+        .animation(Theme.motion, value: model.layout)
     }
 
     private func icon(for layout: ReaderModel.PageLayout) -> String {
@@ -131,9 +132,10 @@ struct PagePill: View {
                     + Text(" / \(model.pageCount)").foregroundStyle(Theme.inkMuted))
                     .font(.system(size: 13))
                     .monospacedDigit()
-                    .padding(.horizontal, 2)
+                    .padding(.horizontal, 6)
+                    .frame(height: 30)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.sheaf(cornerRadius: 7))
             .help("Go to page (\u{2325}\u{2318}G)")
             PillIconButton(label: "Next page", systemImage: sideways ? "chevron.right" : "chevron.down", isEnabled: model.canGoToNextPage) {
                 model.goToNextPage()
@@ -155,9 +157,10 @@ struct ZoomPill: View {
                     .font(.system(size: 13, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(Theme.ink)
-                    .frame(minWidth: 40)
+                    .frame(minWidth: 44)
+                    .frame(height: 30)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.sheaf(cornerRadius: 7))
             .help(model.isFitToWindow ? "Actual size (\u{2318}0)" : "Zoom to fit (\u{2318}9)")
             PillIconButton(label: "Zoom in (\u{2318}+)", systemImage: "plus", action: model.zoomIn)
         }

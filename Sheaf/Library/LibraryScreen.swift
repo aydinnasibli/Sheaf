@@ -56,6 +56,7 @@ struct LibraryScreen: View {
 
     @State private var scope = LibraryScope.all
     @State private var filter = LibraryFilter.all
+    @State private var highlightKinds = Set<HighlightKind>()
     @State private var searchText = ""
     @State private var selection: LibraryEntry.ID?
     @State private var sortColumn = LibraryColumn.opened
@@ -74,15 +75,22 @@ struct LibraryScreen: View {
     var body: some View {
         HStack(spacing: 0) {
             if width >= 820 {
-                LibrarySidebar(scope: $scope, entries: entries, collections: collections, highlights: allHighlights)
-                    .frame(width: 216)
+                LibrarySidebar(
+                    scope: $scope,
+                    highlightKinds: $highlightKinds,
+                    entries: entries,
+                    collections: collections,
+                    highlights: allHighlights
+                )
+                .frame(width: 216)
                 Hairline(axis: .vertical)
             }
             if scope.showsHighlights {
                 HighlightsPage(
                     title: scope == .notes ? "Notes" : "Highlights",
                     records: allHighlights.filter { scope != .notes || !$0.note.isEmpty },
-                    searchText: searchText
+                    searchText: searchText,
+                    kinds: $highlightKinds
                 ) { record in
                     if let entry = record.entry { WindowRouter.shared.open(entry, at: record) }
                 }
@@ -167,8 +175,7 @@ struct LibraryScreen: View {
             if entries.isEmpty {
                 EmptyLibrary()
             } else if rows.isEmpty {
-                ContentUnavailableView.search(text: searchText)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                noRows
             } else {
                 list
             }
@@ -220,6 +227,56 @@ struct LibraryScreen: View {
             guard let entry = rows.first(where: { $0.id == selection }) else { return .ignored }
             open([entry])
             return .handled
+        }
+    }
+
+    /// Shown when the library has PDFs but none fit the search, filter or
+    /// section. Says which one is hiding them, and how to see them again.
+    @ViewBuilder
+    private var noRows: some View {
+        if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            ContentUnavailableView.search(text: searchText)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if filter != .all {
+            EmptyMessage(
+                systemImage: filter == .openQuestions ? "questionmark.bubble" : "line.3.horizontal.decrease",
+                title: filterEmptyTitle,
+                message: filterEmptyMessage,
+                actionTitle: "Show All PDFs"
+            ) { filter = .all }
+        } else if scope == .starred {
+            EmptyMessage(
+                systemImage: "star",
+                title: "No starred PDFs",
+                message: "Right-click a PDF and choose Star to keep it here."
+            )
+        } else {
+            EmptyMessage(
+                systemImage: "folder",
+                title: "This collection is empty",
+                message: "Right-click a PDF and choose Add to Collection."
+            )
+        }
+    }
+
+    private var filterEmptyTitle: String {
+        switch filter {
+        case .all: ""
+        case .unread: "No unread PDFs"
+        case .inProgress: "Nothing in progress"
+        case .finished: "No finished PDFs"
+        case .openQuestions: "No open questions"
+        }
+    }
+
+    private var filterEmptyMessage: String {
+        let place = scope == .all ? "your library" : "here"
+        switch filter {
+        case .all: return ""
+        case .unread: return "You\u{2019}ve started every PDF in \(place)."
+        case .inProgress: return "PDFs you\u{2019}ve started but not finished show up here."
+        case .finished: return "PDFs you\u{2019}ve read to the end show up here."
+        case .openQuestions: return "PDFs with a Question highlight show up here."
         }
     }
 
@@ -325,9 +382,12 @@ struct LibrarySearchField: View {
                 .onExitCommand { text = "" }
             if !text.isEmpty {
                 Button { text = "" } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.inkMuted)
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(Theme.inkMuted)
+                        .frame(width: 22, height: 22)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.sheaf(.quiet, in: Circle()))
+                .help("Clear search")
                 .accessibilityLabel("Clear search")
             }
             Text("\u{2318}K")

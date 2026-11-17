@@ -45,20 +45,13 @@ struct HighlightsPanel: View {
 
             Spacer(minLength: 0)
 
-            Button {
-                export()
-            } label: {
-                Label("Export highlights as Markdown", systemImage: "square.and.arrow.down")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 36)
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.control, lineWidth: 1))
-                    .contentShape(RoundedRectangle(cornerRadius: 10))
-            }
-            .buttonStyle(.plain)
+            SecondaryButton(
+                title: "Export highlights as Markdown",
+                systemImage: "square.and.arrow.down",
+                fillsWidth: true,
+                action: export
+            )
             .disabled(model.highlights.isEmpty)
-            .opacity(model.highlights.isEmpty ? 0.5 : 1)
         }
         .padding(.horizontal, 16)
         .padding(.top, 18)
@@ -110,9 +103,9 @@ struct HighlightFilterChips: View {
                         .foregroundStyle(kind.chipText)
                         .background(kind.chipBackground, in: Capsule())
                         .overlay(Capsule().strokeBorder(isOn ? Theme.accent : .clear, lineWidth: 1.5))
-                        .contentShape(Capsule())
+                        .animation(Theme.hoverAnimation, value: isOn)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.sheaf(.overlay, in: Capsule()))
                 .help(isOn ? "Show all colors" : "Show only \(kind.name)")
                 .accessibilityLabel("\(kind.name), \(model.count(of: kind))")
                 .accessibilityAddTraits(isOn ? .isSelected : [])
@@ -144,9 +137,8 @@ struct HighlightCard: View {
                         .lineLimit(5)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.sheaf(.quiet, in: Rectangle()))
                 .help("Go to this highlight")
                 .accessibilityLabel("\(record.kind.name): \(record.text)")
                 .accessibilityHint("Goes to this highlight")
@@ -173,17 +165,20 @@ struct HighlightCard: View {
                             .foregroundStyle(Theme.inkMuted)
                             .multilineTextAlignment(.leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.sheaf(.quiet, in: Rectangle()))
                     .help("Edit note")
-                } else if isHovered {
+                } else {
+                    // Always takes its space and fades in under the pointer, so
+                    // hovering a card doesn't push the cards below it down.
                     Button(action: startEditing) {
                         Label("Add note", systemImage: "plus")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.inkMuted)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.sheaf(.quiet, in: Rectangle()))
+                    .opacity(isHovered ? 1 : 0)
+                    .accessibilityHidden(!isHovered)
                 }
             }
             Spacer(minLength: 0)
@@ -191,7 +186,11 @@ struct HighlightCard: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 11)
         .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isEditing ? Theme.control : Theme.border, lineWidth: 1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(isEditing || isHovered ? Theme.control : Theme.border, lineWidth: 1)
+        )
+        .animation(Theme.hoverAnimation, value: isHovered)
         .onHover { isHovered = $0 }
         .onChange(of: isNoteFocused) { _, focused in
             if !focused && isEditing { commit() }
