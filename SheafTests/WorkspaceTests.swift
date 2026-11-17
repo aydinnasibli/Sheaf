@@ -71,6 +71,26 @@ struct WorkspaceTests {
         #expect(workspace.isShowingLibrary)
     }
 
+    @Test func focusModeLastsWhileSwitchingPDFsAndEndsInTheLibrary() throws {
+        let workspace = Workspace(library: store, preferences: preferences)
+        let first = try entry(named: "First")
+        let second = try entry(named: "Second")
+        workspace.open(first)
+        workspace.open(second)
+        workspace.isFocusMode = true
+
+        workspace.select(first.id)
+        #expect(workspace.isFocusMode)
+
+        workspace.showLibrary()
+        #expect(!workspace.isFocusMode)
+
+        workspace.open(first)
+        workspace.isFocusMode = true
+        workspace.close(first.id)
+        #expect(!workspace.isFocusMode)
+    }
+
     @Test func openPDFsAreReopenedNextLaunch() throws {
         let first = try entry(named: "First")
         let second = try entry(named: "Second")

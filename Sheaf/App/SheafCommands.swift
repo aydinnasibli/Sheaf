@@ -77,10 +77,16 @@ struct SheafCommands: Commands {
             Button("Zoom Out") { reader?.zoomOut() }
                 .keyboardShortcut("-")
             Divider()
-            Toggle("Show Page Thumbnails", isOn: $showsThumbnails)
+            Toggle("Show Pages and Contents", isOn: $showsThumbnails)
                 .keyboardShortcut("1", modifiers: [.command, .option])
             Toggle("Show Highlights Panel", isOn: $showsHighlightsPanel)
                 .keyboardShortcut("2", modifiers: [.command, .option])
+            Toggle("Focus Mode", isOn: Binding(
+                get: { workspace.isFocusMode },
+                set: { workspace.isFocusMode = $0 }
+            ))
+            .keyboardShortcut("f", modifiers: [.command, .shift])
+            .disabled(reader == nil)
             Divider()
         }
 

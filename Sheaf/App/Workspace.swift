@@ -10,9 +10,14 @@ import SwiftUI
 final class Workspace {
     private(set) var documents: [OpenDocument] = []
     /// The PDF on screen, or `nil` for the library.
-    private(set) var selectedID: UUID?
+    private(set) var selectedID: UUID? {
+        didSet { if selectedID == nil { isFocusMode = false } }
+    }
     /// Incremented by Find / Search Library (⌘F, ⌘K) to focus the library's search field.
     var librarySearchRequest = 0
+    /// Focus mode: only the page, full screen, with the side panels hidden.
+    /// Going back to the library ends it.
+    var isFocusMode = false
 
     @ObservationIgnored private let library: LibraryStore
     @ObservationIgnored private let preferences: UserDefaults

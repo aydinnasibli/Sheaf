@@ -7,6 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        DebugSnapshot.start()
+        #endif
         // Control-Tab / Control-Shift-Tab switch between the library and open
         // PDFs. macOS normally uses Control-Tab to move focus between
         // controls, so catch it before that happens.

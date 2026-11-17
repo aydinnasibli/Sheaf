@@ -9,6 +9,7 @@ struct ReaderScreen: View {
     let document: OpenDocument
 
     @Environment(Workspace.self) private var workspace
+    @State private var isDropTargeted = false
 
     var body: some View {
         Group {
@@ -55,6 +56,21 @@ struct ReaderScreen: View {
             }
         }
         .sheafHeader()
+        // PDFs dropped from Finder open here (and join the library).
+        .dropDestination(for: URL.self) { urls, _ in
+            let pdfs = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .pdf) ?? false }
+            guard !pdfs.isEmpty else { return false }
+            WindowRouter.shared.open(urls: pdfs)
+            return true
+        } isTargeted: { isDropTargeted = $0 }
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                    .padding(10)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 
@@ -88,14 +104,19 @@ struct ReaderLayout: View {
     @State private var pageEntry = ""
     @FocusState private var isSearchFocused: Bool
 
+    private var isFocusMode: Bool { workspace.isFocusMode }
+    /// The side panels need room beside the page; in a narrow window they hide.
+    private var stripFits: Bool { width >= 900 }
+    private var panelFits: Bool { width >= 760 }
+
     var body: some View {
         HStack(spacing: 0) {
-            if showsThumbnails && width >= 900 {
+            if showsThumbnails && stripFits && !isFocusMode {
                 PageStrip(model: model)
                 Hairline(axis: .vertical)
             }
             pageArea
-            if showsPanel && width >= 760 {
+            if showsPanel && panelFits && !isFocusMode {
                 Hairline(axis: .vertical)
                 Group {
                     if model.isShowingSearchResults {
@@ -138,6 +159,11 @@ struct ReaderLayout: View {
         .task {
             model.undoManager = undoManager
             model.restoreReadingPosition()
+            model.pdfView.onEscape = { [workspace] in
+                guard workspace.isFocusMode else { return false }
+                workspace.isFocusMode = false
+                return true
+            }
         }
         .task(id: document.pendingHighlightID) {
             // Opened from a highlight in the library: scroll to it.
@@ -188,8 +214,16 @@ struct ReaderLayout: View {
     private var header: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: 12) {
-                SquareIconButton(label: "Back to library (\u{21E7}\u{2318}L)", systemImage: "chevron.left") {
-                    workspace.showLibrary()
+                HStack(spacing: 8) {
+                    if stripFits && !isFocusMode {
+                        SquareIconButton(
+                            label: showsThumbnails ? "Hide pages and contents (\u{2325}\u{2318}1)" : "Show pages and contents (\u{2325}\u{2318}1)",
+                            systemImage: "sidebar.left"
+                        ) { showsThumbnails.toggle() }
+                    }
+                    SquareIconButton(label: "Back to library (\u{21E7}\u{2318}L)", systemImage: "chevron.left") {
+                        workspace.showLibrary()
+                    }
                 }
                 TitleBlock(model: model)
             }
@@ -197,17 +231,17 @@ struct ReaderLayout: View {
         .plainBackground()
 
         ToolbarItem(placement: .principal) {
-            PenPicker(model: model, compact: width < 1240)
+            PenPicker(model: model, compact: width < 1360)
         }
         .plainBackground()
 
         ToolbarItem(placement: .primaryAction) {
             HStack(spacing: 8) {
-                if width >= 1000 {
+                if width >= 1080 {
                     LayoutSwitch(model: model)
                 }
                 PagePill(model: model)
-                if width >= 1100 {
+                if width >= 1200 {
                     ZoomPill(model: model)
                 }
                 SquareIconButton(label: "Search in this PDF (\u{2318}F)", systemImage: "magnifyingglass", isOn: model.isSearchBarVisible) {
@@ -216,6 +250,17 @@ struct ReaderLayout: View {
                     } else {
                         model.searchFocusRequest += 1
                     }
+                }
+                SquareIconButton(
+                    label: isFocusMode ? "Leave focus mode (Esc)" : "Focus mode: only the page, full screen (\u{21E7}\u{2318}F)",
+                    systemImage: isFocusMode ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                    isOn: isFocusMode
+                ) { workspace.isFocusMode.toggle() }
+                if panelFits && !isFocusMode {
+                    SquareIconButton(
+                        label: showsPanel ? "Hide highlights panel (\u{2325}\u{2318}2)" : "Show highlights panel (\u{2325}\u{2318}2)",
+                        systemImage: "sidebar.right"
+                    ) { showsPanel.toggle() }
                 }
             }
         }

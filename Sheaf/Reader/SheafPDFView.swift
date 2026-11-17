@@ -7,6 +7,8 @@ final class SheafPDFView: PDFView {
     var onMouseUp: (() -> Void)?
     /// Return true if the key was used.
     var onHighlightKey: ((HighlightKind) -> Bool)?
+    /// Esc in the page. Return true if it was used (it ends focus mode).
+    var onEscape: (() -> Bool)?
 
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
@@ -24,6 +26,9 @@ final class SheafPDFView: PDFView {
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function])
+        if event.keyCode == 53, modifiers.isEmpty, onEscape?() == true {
+            return
+        }
         if modifiers.isEmpty,
            let characters = event.charactersIgnoringModifiers,
            let number = Int(characters),
