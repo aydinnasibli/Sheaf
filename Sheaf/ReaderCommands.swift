@@ -1,9 +1,13 @@
 import SwiftUI
 
-/// Menu bar items. They act on the frontmost tab: the library or a PDF.
+/// Menu bar items. They act on what's on screen: the library or a PDF.
 struct ReaderCommands: Commands {
-    @FocusedValue(ReaderModel.self) private var reader
-    @FocusedValue(LibrarySearchFocus.self) private var librarySearch
+    let workspace: Workspace
+
+    /// The PDF on screen. Read from the workspace rather than keyboard
+    /// focus, so the menus work even while typing in a search field.
+    private var reader: ReaderModel? { workspace.selectedDocument?.model }
+
     @AppStorage("showsThumbnails") private var showsThumbnails = true
     @AppStorage("showsHighlightsPanel") private var showsHighlightsPanel = true
 
@@ -14,20 +18,32 @@ struct ReaderCommands: Commands {
                 .keyboardShortcut("o")
         }
 
+        // File > Close: closes the PDF on screen, or the window from the library.
+        CommandGroup(replacing: .saveItem) {
+            if let document = workspace.selectedDocument {
+                Button("Close \u{201C}\(document.title)\u{201D}") { workspace.close(document.id) }
+                    .keyboardShortcut("w")
+            } else {
+                Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
+                    .keyboardShortcut("w")
+            }
+        }
+
         // Edit > Find. Replaces the text-editing group, which a reader doesn't need.
         CommandGroup(replacing: .textEditing) {
             Button("Find\u{2026}") {
                 if let reader {
                     reader.searchFocusRequest += 1
                 } else {
-                    librarySearch?.request += 1
+                    workspace.librarySearchRequest += 1
                 }
             }
             .keyboardShortcut("f")
-            .disabled(reader == nil && librarySearch == nil)
-            Button("Search Library") { librarySearch?.request += 1 }
-                .keyboardShortcut("k")
-                .disabled(librarySearch == nil)
+            Button("Search Library") {
+                WindowRouter.shared.showLibrary()
+                workspace.librarySearchRequest += 1
+            }
+            .keyboardShortcut("k")
             Button("Find Next") { reader?.selectNextResult() }
                 .keyboardShortcut("g")
                 .disabled(reader?.searchResults.isEmpty ?? true)
@@ -78,6 +94,16 @@ struct ReaderCommands: Commands {
         }
 
         CommandMenu("Go") {
+            Button("Library") { WindowRouter.shared.showLibrary() }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+            // ⇧⌘] and ⇧⌘[ like Safari's tabs; Control-Tab also works (see AppDelegate).
+            Button("Next Open PDF") { workspace.selectNext() }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .disabled(workspace.documents.isEmpty)
+            Button("Previous Open PDF") { workspace.selectPrevious() }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .disabled(workspace.documents.isEmpty)
+            Divider()
             Button("Previous Page") { reader?.goToPreviousPage() }
                 .keyboardShortcut(.upArrow, modifiers: [.command, .option])
                 .disabled(!(reader?.canGoToPreviousPage ?? false))

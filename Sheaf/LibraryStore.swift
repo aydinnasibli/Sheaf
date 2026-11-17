@@ -41,6 +41,24 @@ final class LibraryStore {
         return record
     }
 
+    /// Brings back a deleted highlight with its original ID (for Undo).
+    @discardableResult
+    func restoreHighlight(_ snapshot: HighlightSnapshot, to entry: LibraryEntry) -> HighlightRecord {
+        let record = HighlightRecord(
+            pageIndex: snapshot.pageIndex,
+            kind: HighlightKind(rawValue: snapshot.kindRaw) ?? .keyIdea,
+            text: snapshot.text,
+            rects: snapshot.rects,
+            now: snapshot.createdAt
+        )
+        record.id = snapshot.id
+        record.note = snapshot.note
+        context.insert(record)
+        record.entry = entry
+        save()
+        return record
+    }
+
     func setNote(_ note: String, for record: HighlightRecord) {
         record.note = note.trimmingCharacters(in: .whitespacesAndNewlines)
         save()

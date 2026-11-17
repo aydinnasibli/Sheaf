@@ -93,12 +93,14 @@ enum HighlightKind: Int, CaseIterable, Identifiable, Codable {
 
     /// The highlight drawn on the page. Pages stay paper-white in Dark Mode,
     /// so this color doesn't change with the appearance.
-    var pageColor: NSColor {
+    var pageColor: NSColor { NSColor(hex: pageColorHex) }
+
+    var pageColorHex: UInt32 {
         switch self {
-        case .keyIdea: NSColor(hex: 0xFFE066)
-        case .question: NSColor(hex: 0xFFC2D1)
-        case .definition: NSColor(hex: 0xA5D8FF)
-        case .evidence: NSColor(hex: 0xB2F2BB)
+        case .keyIdea: 0xFFE066
+        case .question: 0xFFC2D1
+        case .definition: 0xA5D8FF
+        case .evidence: 0xB2F2BB
         }
     }
 

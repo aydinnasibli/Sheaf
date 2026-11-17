@@ -72,6 +72,24 @@ final class ReaderModel {
     var panelFilter = Set<HighlightKind>()
     /// Set when writing highlights into the file failed.
     private(set) var saveError: String?
+    /// Why highlights are kept in Sheaf only, if this file can't be rewritten.
+    private(set) var fileWriteBlock: FileWriteBlock?
+    /// The window's undo manager, set by the reader view.
+    @ObservationIgnored weak var undoManager: UndoManager?
+
+    enum FileWriteBlock {
+        case passwordProtected
+        case signed
+
+        var explanation: String {
+            switch self {
+            case .passwordProtected:
+                "This PDF is password-protected, so highlights are kept in Sheaf\u{2019}s library and not written into the file."
+            case .signed:
+                "This PDF is digitally signed, so highlights are kept in Sheaf\u{2019}s library and not written into the file (that would break the signature)."
+            }
+        }
+    }
 
     // MARK: Search state
 
@@ -86,7 +104,8 @@ final class ReaderModel {
     @ObservationIgnored private var hasRestoredPosition = false
     @ObservationIgnored private var activeQuery = ""
     @ObservationIgnored private var seenMatches = Set<MatchKey>()
-    @ObservationIgnored private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var debounceTask: Task<Void, Never>?
+    @ObservationIgnored private var saveChain: Task<Void, Never>?
     @ObservationIgnored private var hasUnsavedChanges = false
     @ObservationIgnored nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
@@ -116,6 +135,9 @@ final class ReaderModel {
         pdfView.onMouseUp = { [weak self] in self?.mouseUpInPage() }
         pdfView.onHighlightKey = { [weak self] kind in self?.highlightKeyPressed(kind) ?? false }
 
+        if document.isEncrypted {
+            fileWriteBlock = .passwordProtected
+        }
         refreshHighlights()
         if PDFHighlights.restoreMissing(highlights, in: document) > 0 {
             scheduleSave()
@@ -144,11 +166,18 @@ final class ReaderModel {
         pdfView.go(to: page)
     }
 
-    /// Call when the tab closes.
+    /// Call when the PDF is closed.
     func close() {
         document.cancelFindString()
-        saveTask?.cancel()
-        saveNow()
+        flushPendingSave()
+        undoManager?.removeAllActions(withTarget: self)
+    }
+
+    /// Call when the reader leaves the screen: saves now, and drops undo
+    /// steps so ⌘Z elsewhere can't change this PDF unseen.
+    func suspend() {
+        flushPendingSave()
+        undoManager?.removeAllActions(withTarget: self)
     }
 
     // MARK: Pages
@@ -241,7 +270,7 @@ final class ReaderModel {
         else { return false }
 
         let lines = selection.selectionsByLine()
-        var didHighlight = false
+        var created: [HighlightSnapshot] = []
         for page in selection.pages {
             let pageLines = lines.filter { $0.pages.contains(page) }
             let rects = pageLines.map { $0.bounds(for: page) }.filter { $0.width > 0.5 && $0.height > 0.5 }
@@ -254,34 +283,76 @@ final class ReaderModel {
                 to: entry, pageIndex: document.index(for: page), kind: kind, text: text, rects: rects
             )
             PDFHighlights.add(record, to: document)
-            didHighlight = true
+            created.append(HighlightSnapshot(record))
         }
-        guard didHighlight else { return false }
+        guard !created.isEmpty else { return false }
         pdfView.clearSelection()
         refreshHighlights()
         scheduleSave()
+        registerUndo("Highlight") { $0.removeHighlights(created, actionName: "Highlight") }
         return true
     }
 
     func setNote(_ note: String, for record: HighlightRecord) {
+        let old = record.note
+        let id = record.id
+        guard note.trimmingCharacters(in: .whitespacesAndNewlines) != old else { return }
         store?.setNote(note, for: record)
         PDFHighlights.update(record, in: document)
         refreshHighlights()
         scheduleSave()
+        registerUndo("Edit Note") { model in
+            if let record = model.highlight(id: id) { model.setNote(old, for: record) }
+        }
     }
 
     func setKind(_ kind: HighlightKind, for record: HighlightRecord) {
+        let old = record.kind
+        let id = record.id
+        guard kind != old else { return }
         store?.setKind(kind, for: record)
         PDFHighlights.update(record, in: document)
         refreshHighlights()
         scheduleSave()
+        registerUndo("Change Highlight Color") { model in
+            if let record = model.highlight(id: id) { model.setKind(old, for: record) }
+        }
     }
 
     func delete(_ record: HighlightRecord) {
-        PDFHighlights.remove(record.id, from: document)
-        store?.delete(record)
+        removeHighlights([HighlightSnapshot(record)], actionName: "Delete Highlight")
+    }
+
+    func highlight(id: UUID) -> HighlightRecord? {
+        highlights.first { $0.id == id }
+    }
+
+    /// Removes highlights; Undo puts them back with the same IDs.
+    private func removeHighlights(_ snapshots: [HighlightSnapshot], actionName: String) {
+        for snapshot in snapshots {
+            PDFHighlights.remove(snapshot.id, from: document)
+            if let record = highlight(id: snapshot.id) { store?.delete(record) }
+        }
         refreshHighlights()
         scheduleSave()
+        registerUndo(actionName) { $0.restoreHighlights(snapshots, actionName: actionName) }
+    }
+
+    private func restoreHighlights(_ snapshots: [HighlightSnapshot], actionName: String) {
+        guard let entry, let store else { return }
+        for snapshot in snapshots {
+            store.restoreHighlight(snapshot, to: entry)
+            PDFHighlights.add(snapshot, to: document)
+        }
+        refreshHighlights()
+        scheduleSave()
+        registerUndo(actionName) { $0.removeHighlights(snapshots, actionName: actionName) }
+    }
+
+    private func registerUndo(_ actionName: String, _ action: @escaping (ReaderModel) -> Void) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { action($0) }
+        undoManager.setActionName(actionName)
     }
 
     func go(to record: HighlightRecord) {
@@ -365,29 +436,57 @@ final class ReaderModel {
     /// burst of highlighting causes one save.
     private func scheduleSave() {
         hasUnsavedChanges = true
-        saveTask?.cancel()
-        saveTask = Task { [weak self] in
+        debounceTask?.cancel()
+        debounceTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            self?.saveNow()
+            self?.startSave()
         }
     }
 
-    /// Whether highlights are written into the file. Password-protected PDFs
-    /// are left untouched: rewriting them would remove the password.
-    var canWriteHighlightsToFile: Bool { fileURL != nil && !document.isEncrypted }
+    /// Starts saving now instead of after the usual pause.
+    func flushPendingSave() {
+        debounceTask?.cancel()
+        startSave()
+    }
 
-    func saveNow() {
-        guard hasUnsavedChanges, let fileURL, canWriteHighlightsToFile else { return }
+    /// Saves now and waits until the file is written.
+    func saveAndWait() async {
+        flushPendingSave()
+        await saveChain?.value
+    }
+
+    /// Saves run one after another on a background thread: writing a long
+    /// PDF can take several seconds, and reading must not freeze meanwhile.
+    private func startSave() {
+        guard hasUnsavedChanges, let fileURL, fileWriteBlock == nil else { return }
         hasUnsavedChanges = false
-        var coordinationError: NSError?
-        var didWrite = false
-        NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: fileURL, options: .forReplacing, error: &coordinationError) { url in
-            didWrite = document.write(to: url)
+        let snapshots = highlights.map(HighlightSnapshot.init)
+        let previous = saveChain
+        let task = Task { [weak self] in
+            await previous?.value
+            let outcome = await Task.detached(priority: .utility) {
+                PDFHighlightWriter.write(snapshots, to: fileURL)
+            }.value
+            self?.finishSave(outcome, fileName: fileURL.lastPathComponent)
         }
-        saveError = didWrite
-            ? nil
-            : "Couldn\u{2019}t save highlights into \u{201C}\(fileURL.lastPathComponent)\u{201D}. They\u{2019}re still kept in Sheaf\u{2019}s library."
+        saveChain = task
+        SaveTracker.shared.track(task)
+    }
+
+    private func finishSave(_ outcome: PDFHighlightWriter.Outcome, fileName: String) {
+        switch outcome {
+        case .saved:
+            saveError = nil
+        case .signed:
+            fileWriteBlock = .signed
+            saveError = nil
+        case .passwordProtected:
+            fileWriteBlock = .passwordProtected
+            saveError = nil
+        case .failed:
+            saveError = "Couldn\u{2019}t save highlights into \u{201C}\(fileName)\u{201D}. They\u{2019}re still kept in Sheaf\u{2019}s library."
+        }
     }
 
     // MARK: Search
@@ -528,8 +627,8 @@ final class ReaderModel {
                     self.refreshSearchHighlights()
                 }
             },
-            center.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.saveNow() }
+            center.addObserver(forName: .sheafFlushSaves, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.flushPendingSave() }
             },
         ]
     }

@@ -1,26 +1,19 @@
 import AppKit
 import PDFKit
 
-/// Writes Sheaf's highlights into a PDF as standard highlight annotations,
-/// so they also appear in Preview and other PDF apps.
+/// Adds, updates and removes Sheaf's highlights in the PDF that's on screen.
+/// (Writing them into the file happens in `PDFHighlightWriter`.)
 ///
-/// Each line of a highlight is its own annotation. Every annotation carries
-/// a `/SheafID` entry, `sheaf-<record id>-<line>`, which is how Sheaf finds
-/// its own highlights again when the file is reopened. (PDFKit drops the
-/// standard "NM" name field when saving, but keeps custom entries; other
-/// PDF apps ignore entries they don't know.)
+/// Each line of a highlight is its own annotation, tagged with a `/SheafID`
+/// entry `sheaf-<record id>-<line>` so Sheaf can find it again.
 enum PDFHighlights {
-    static let prefix = "sheaf-"
-    static let idKey = PDFAnnotationKey(rawValue: "/SheafID")
-
     static func add(_ record: HighlightRecord, to document: PDFDocument) {
-        guard let page = document.page(at: record.pageIndex) else { return }
-        for (line, rect) in record.rects.enumerated() {
-            let annotation = PDFAnnotation(bounds: rect, forType: .highlight, withProperties: nil)
-            annotation.color = record.kind.pageColor
-            annotation.contents = record.note.isEmpty ? nil : record.note
-            annotation.userName = "Sheaf"
-            annotation.setValue(name(for: record.id, line: line), forAnnotationKey: idKey)
+        add(HighlightSnapshot(record), to: document)
+    }
+
+    static func add(_ snapshot: HighlightSnapshot, to document: PDFDocument) {
+        guard let page = document.page(at: snapshot.pageIndex) else { return }
+        for annotation in PDFHighlightWriter.makeAnnotations(for: snapshot) {
             page.addAnnotation(annotation)
         }
     }
@@ -49,7 +42,7 @@ enum PDFHighlights {
         return ids
     }
 
-    /// Adds any highlights from the index that the file is missing, for
+    /// Adds any highlights from the index that the PDF is missing, for
     /// example after an earlier save failed. Returns how many were added.
     @discardableResult
     static func restoreMissing(_ records: [HighlightRecord], in document: PDFDocument) -> Int {
@@ -59,16 +52,8 @@ enum PDFHighlights {
         return missing.count
     }
 
-    // MARK: Helpers
-
-    static func name(for id: UUID, line: Int) -> String {
-        "\(prefix)\(id.uuidString)-\(line)"
-    }
-
     static func id(of annotation: PDFAnnotation) -> UUID? {
-        guard let name = annotation.value(forAnnotationKey: idKey) as? String, name.hasPrefix(prefix) else { return nil }
-        let rest = name.dropFirst(prefix.count)
-        return UUID(uuidString: String(rest.prefix(36)))
+        PDFHighlightWriter.id(of: annotation)
     }
 
     private static func annotations(for id: UUID, in document: PDFDocument) -> [(PDFPage, PDFAnnotation)] {

@@ -3,35 +3,22 @@ import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// A reader tab: opens the PDF for a library entry, asks for a password if
-/// it has one, then shows the reader.
+/// An open PDF on screen: asks for a password if it has one, then shows the
+/// reader. The loading itself happens in `OpenDocument`.
 struct ReaderScreen: View {
-    let entryID: UUID?
+    let document: OpenDocument
 
-    @Environment(LibraryStore.self) private var library
-    @Environment(\.openWindow) private var openWindow
-
-    private enum Phase {
-        case loading
-        case locked(PDFDocument, LibraryEntry, URL)
-        case ready(ReaderModel)
-        case failed(title: String, message: String)
-    }
-
-    @State private var phase = Phase.loading
+    @Environment(Workspace.self) private var workspace
 
     var body: some View {
         Group {
-            switch phase {
+            switch document.phase {
             case .loading:
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .locked(let document, let entry, let url):
-                UnlockView(document: document) {
-                    phase = .ready(makeModel(document: document, entry: entry, url: url))
-                }
-                .navigationTitle(entry.title)
+            case .locked:
+                UnlockView { document.unlock(with: $0) }
             case .ready(let model):
-                ReaderLayout(model: model)
+                ReaderLayout(model: model, document: document)
             case .failed(let title, let message):
                 VStack(spacing: 14) {
                     Image(systemName: "doc.questionmark")
@@ -43,47 +30,31 @@ struct ReaderScreen: View {
                         .foregroundStyle(Theme.inkMuted)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 380)
-                    PrimaryButton(title: "Back to Library") { openWindow(id: "library") }
+                    PrimaryButton(title: "Back to Library") { workspace.close(document.id) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .navigationTitle(title)
             }
         }
         .frame(minWidth: 720, minHeight: 480)
         .background(Theme.background)
+        .navigationTitle(document.title)
+        .toolbar {
+            if document.model == nil {
+                ToolbarItem(placement: .navigation) {
+                    HStack(spacing: 12) {
+                        SquareIconButton(label: "Back to library (\u{21E7}\u{2318}L)", systemImage: "chevron.left") {
+                            workspace.showLibrary()
+                        }
+                        Text(document.title)
+                            .font(Theme.display(15))
+                            .foregroundStyle(Theme.ink)
+                            .lineLimit(1)
+                    }
+                }
+                .plainBackground()
+            }
+        }
         .sheafHeader()
-        .onAppear { WindowRouter.shared.attach(openWindow) }
-        .task { load() }
-    }
-
-    private func load() {
-        guard case .loading = phase else { return }
-        guard let entryID, let entry = library.entry(id: entryID) else {
-            phase = .failed(title: "PDF Not Found", message: "This PDF is no longer in your library.")
-            return
-        }
-        guard let url = library.resolveFile(for: entry) else {
-            phase = .failed(
-                title: "Can\u{2019}t Find \u{201C}\(entry.title)\u{201D}",
-                message: "It was last at \(entry.lastKnownPath). It may have been deleted, or moved to a drive that isn\u{2019}t connected."
-            )
-            return
-        }
-        guard let document = PDFDocument(url: url) else {
-            phase = .failed(
-                title: "Can\u{2019}t Open This PDF",
-                message: "\u{201C}\(entry.title)\u{201D} may be damaged or may not be a PDF."
-            )
-            return
-        }
-        phase = document.isLocked
-            ? .locked(document, entry, url)
-            : .ready(makeModel(document: document, entry: entry, url: url))
-    }
-
-    private func makeModel(document: PDFDocument, entry: LibraryEntry, url: URL) -> ReaderModel {
-        library.recordOpen(of: url, document: document)
-        return ReaderModel(document: document, entry: entry, store: library, fileURL: url)
     }
 }
 
@@ -92,8 +63,10 @@ struct ReaderScreen: View {
 /// Header, thumbnail strip, page and Highlights panel (C · Reader mockup).
 private struct ReaderLayout: View {
     @Bindable var model: ReaderModel
+    let document: OpenDocument
 
-    @Environment(\.openWindow) private var openWindow
+    @Environment(Workspace.self) private var workspace
+    @Environment(\.undoManager) private var undoManager
     @AppStorage("showsThumbnails") private var showsThumbnails = true
     @AppStorage("showsHighlightsPanel") private var showsPanel = true
     @State private var width: CGFloat = 1280
@@ -123,7 +96,6 @@ private struct ReaderLayout: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .navigationTitle(model.title)
         .toolbar { header }
-        .focusedSceneValue(model)
         .task(id: model.searchQuery) {
             // Wait for a pause in typing before searching.
             do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
@@ -145,8 +117,18 @@ private struct ReaderLayout: View {
         } message: {
             Text("Enter a page number from 1 to \(model.pageCount).")
         }
-        .task { model.restoreReadingPosition() }
-        .onDisappear { model.close() }
+        .task {
+            model.undoManager = undoManager
+            model.restoreReadingPosition()
+        }
+        .task(id: document.pendingHighlightID) {
+            // Opened from a highlight in the library: scroll to it.
+            guard let id = document.pendingHighlightID else { return }
+            await Task.yield()
+            if let record = model.highlight(id: id) { model.go(to: record) }
+            document.pendingHighlightID = nil
+        }
+        .onDisappear { model.suspend() }
     }
 
     private var pageArea: some View {
@@ -180,7 +162,7 @@ private struct ReaderLayout: View {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: 12) {
                 SquareIconButton(label: "Back to library (\u{21E7}\u{2318}L)", systemImage: "chevron.left") {
-                    openWindow(id: "library")
+                    workspace.showLibrary()
                 }
                 TitleBlock(model: model)
             }
@@ -316,6 +298,7 @@ private struct LayoutSwitch: View {
         }
         .padding(2)
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.control, lineWidth: 1))
+        .fixedSize()
     }
 
     private func icon(for layout: ReaderModel.PageLayout) -> String {
@@ -417,6 +400,7 @@ private struct PageStrip: View {
                 .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -455,6 +439,8 @@ private struct ContentsList: View {
                             .contentShape(RoundedRectangle(cornerRadius: 7))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(row.pageIndex.map { "\(row.title), page \($0 + 1)" } ?? row.title)
+                        .accessibilityAddTraits(isCurrent ? .isSelected : [])
                         .id(row.id)
                     }
                 }
@@ -562,8 +548,6 @@ private struct ThumbnailCell: View {
 
 private struct HighlightsPanel: View {
     @Bindable var model: ReaderModel
-    @State private var editing: HighlightRecord?
-    @State private var noteDraft = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -579,6 +563,13 @@ private struct HighlightsPanel: View {
 
             FlowChips(model: model)
 
+            if let block = model.fileWriteBlock {
+                Label(block.explanation, systemImage: "lock")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if model.highlights.isEmpty {
                 emptyState
             } else {
@@ -588,9 +579,7 @@ private struct HighlightsPanel: View {
                             SectionLabel(title: "Page \(group.page + 1)")
                                 .padding(.top, 6)
                             ForEach(group.items) { record in
-                                HighlightCard(record: record)
-                                    .onTapGesture { model.go(to: record) }
-                                    .contextMenu { menu(for: record) }
+                                HighlightCard(record: record, model: model)
                             }
                         }
                     }
@@ -618,15 +607,6 @@ private struct HighlightsPanel: View {
         .padding(.top, 18)
         .padding(.bottom, 16)
         .background(Theme.background)
-        .alert("Note", isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
-            TextField("Write a note", text: $noteDraft)
-            Button("Save") {
-                if let editing { model.setNote(noteDraft, for: editing) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(editing.map { "\u{201C}\($0.text)\u{201D}" } ?? "")
-        }
     }
 
     private var emptyState: some View {
@@ -640,26 +620,6 @@ private struct HighlightsPanel: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.top, 8)
-    }
-
-    @ViewBuilder
-    private func menu(for record: HighlightRecord) -> some View {
-        Button(record.note.isEmpty ? "Add Note\u{2026}" : "Edit Note\u{2026}") {
-            noteDraft = record.note
-            editing = record
-        }
-        Menu("Change Color") {
-            ForEach(HighlightKind.allCases) { kind in
-                Button(kind.name) { model.setKind(kind, for: record) }
-                    .disabled(kind == record.kind)
-            }
-        }
-        Button("Copy Text") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(record.text, forType: .string)
-        }
-        Divider()
-        Button("Delete Highlight", role: .destructive) { model.delete(record) }
     }
 
     private func export() {
@@ -697,28 +657,76 @@ private struct FlowChips: View {
                 }
                 .buttonStyle(.plain)
                 .help(isOn ? "Show all colors" : "Show only \(kind.name)")
+                .accessibilityLabel("\(kind.name), \(model.count(of: kind))")
                 .accessibilityAddTraits(isOn ? .isSelected : [])
             }
         }
     }
 }
 
+/// A highlight in the panel. Click the text to go to it; click the note
+/// (or "Add note") to type a note right on the card.
 private struct HighlightCard: View {
     let record: HighlightRecord
+    let model: ReaderModel
+
+    @State private var isEditing = false
+    @State private var draft = ""
+    @State private var isHovered = false
+    @FocusState private var isNoteFocused: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Swatch(color: record.kind.swatch)
                 .padding(.top, 3)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(record.text)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.ink)
-                    .lineLimit(5)
-                if !record.note.isEmpty {
-                    Text(record.note)
+            VStack(alignment: .leading, spacing: 6) {
+                Button { model.go(to: record) } label: {
+                    Text(record.text)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(5)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Go to this highlight")
+                .accessibilityLabel("\(record.kind.name): \(record.text)")
+                .accessibilityHint("Goes to this highlight")
+
+                if isEditing {
+                    TextField("Write a note\u{2026}", text: $draft, axis: .vertical)
+                        .textFieldStyle(.plain)
                         .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1...6)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(Theme.field, in: RoundedRectangle(cornerRadius: 7))
+                        .focused($isNoteFocused)
+                        .onSubmit(commit)
+                        .onExitCommand { isEditing = false }
+                    Text("Return to save \u{00B7} Esc to cancel")
+                        .font(.system(size: 10.5))
                         .foregroundStyle(Theme.inkMuted)
+                } else if !record.note.isEmpty {
+                    Button(action: startEditing) {
+                        Text(record.note)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Theme.inkMuted)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Edit note")
+                } else if isHovered {
+                    Button(action: startEditing) {
+                        Label("Add note", systemImage: "plus")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             Spacer(minLength: 0)
@@ -726,10 +734,38 @@ private struct HighlightCard: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 11)
         .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border, lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Goes to this highlight")
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isEditing ? Theme.control : Theme.border, lineWidth: 1))
+        .onHover { isHovered = $0 }
+        .onChange(of: isNoteFocused) { _, focused in
+            if !focused && isEditing { commit() }
+        }
+        .contextMenu {
+            Button(record.note.isEmpty ? "Add Note" : "Edit Note", action: startEditing)
+            Menu("Change Color") {
+                ForEach(HighlightKind.allCases) { kind in
+                    Button(kind.name) { model.setKind(kind, for: record) }
+                        .disabled(kind == record.kind)
+                }
+            }
+            Button("Copy Text") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(record.text, forType: .string)
+            }
+            Divider()
+            Button("Delete Highlight", role: .destructive) { model.delete(record) }
+        }
+    }
+
+    private func startEditing() {
+        draft = record.note
+        isEditing = true
+        isNoteFocused = true
+    }
+
+    private func commit() {
+        guard isEditing else { return }
+        isEditing = false
+        model.setNote(draft, for: record)
     }
 }
 
@@ -819,6 +855,8 @@ private struct SearchResultsPanel: View {
                             .contentShape(RoundedRectangle(cornerRadius: 8))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Page \(result.pageLabel): \(String(result.snippet.characters))")
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
                     }
                 }
             }
@@ -844,8 +882,8 @@ private struct SearchResultsPanel: View {
 // MARK: - Password
 
 private struct UnlockView: View {
-    let document: PDFDocument
-    let onUnlock: () -> Void
+    /// Tries the password; returns false if it was wrong.
+    let tryPassword: (String) -> Bool
 
     @State private var password = ""
     @State private var didFail = false
@@ -881,9 +919,7 @@ private struct UnlockView: View {
 
     private func unlock() {
         guard !password.isEmpty else { return }
-        if document.unlock(withPassword: password) {
-            onUnlock()
-        } else {
+        if !tryPassword(password) {
             didFail = true
             password = ""
         }

@@ -6,6 +6,7 @@ struct SheafApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let container: ModelContainer
     @State private var library: LibraryStore
+    @State private var workspace: Workspace
 
     init() {
         let container: ModelContainer
@@ -19,32 +20,24 @@ struct SheafApp: App {
         }
         self.container = container
         let library = LibraryStore(context: container.mainContext)
+        let workspace = Workspace(library: library)
+        workspace.restore()
         _library = State(initialValue: library)
+        _workspace = State(initialValue: workspace)
         WindowRouter.shared.library = library
+        WindowRouter.shared.workspace = workspace
     }
 
     var body: some Scene {
-        // Listed first, so it's the window Sheaf opens at launch. PDFs open
-        // as tabs next to it (see SheafWindows).
-        Window("Library", id: "library") {
-            LibraryWindow()
+        // One window: the library, or the PDF you're reading.
+        Window("Sheaf", id: "main") {
+            MainWindow()
                 .environment(library)
+                .environment(workspace)
                 .modelContainer(container)
-                .frame(minWidth: 760, minHeight: 480)
-                .background(TabbedWindowJoiner(role: .library))
         }
         .defaultSize(width: 1280, height: 820)
         .windowToolbarStyle(.unified(showsTitle: false))
-        .keyboardShortcut("l", modifiers: [.command, .shift])
-        .commands { ReaderCommands() }
-
-        WindowGroup("PDF", id: "reader", for: UUID.self) { $entryID in
-            ReaderScreen(entryID: entryID)
-                .environment(library)
-                .modelContainer(container)
-                .background(TabbedWindowJoiner(role: .reader))
-        }
-        .defaultSize(width: 1280, height: 820)
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .commands { ReaderCommands(workspace: workspace) }
     }
 }

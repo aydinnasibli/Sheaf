@@ -72,13 +72,13 @@ struct HighlightTests {
         #expect(model.activePen == nil)
     }
 
-    @Test func highlightsAreWrittenIntoTheFileAndFoundAgain() throws {
+    @Test func highlightsAreWrittenIntoTheFileAndFoundAgain() async throws {
         let (model, url) = try makeReader(pages: ["Key finding on this page"])
         try select("Key finding", in: model)
         model.highlightSelection(as: .evidence)
         let id = try #require(model.highlights.first?.id)
 
-        model.saveNow()
+        await model.saveAndWait()
 
         let reopened = try #require(PDFDocument(url: url))
         #expect(PDFHighlights.ids(in: reopened) == [id])
@@ -86,7 +86,7 @@ struct HighlightTests {
         #expect(annotation.type == "Highlight")
     }
 
-    @Test func notesColorsAndDeletionReachTheFile() throws {
+    @Test func notesColorsAndDeletionReachTheFile() async throws {
         let (model, url) = try makeReader(pages: ["A definition worth keeping"])
         try select("definition", in: model)
         model.highlightSelection(as: .keyIdea)
@@ -99,7 +99,7 @@ struct HighlightTests {
         #expect(sheafAnnotations(in: model.document, page: 0).first?.contents == "Use in chapter 2")
 
         model.delete(record)
-        model.saveNow()
+        await model.saveAndWait()
 
         #expect(model.highlights.isEmpty)
         #expect(try container.mainContext.fetch(FetchDescriptor<HighlightRecord>()).isEmpty)
@@ -159,5 +159,185 @@ struct HighlightTests {
         #expect(model.pageLabel == "1\u{2013}2")
         model.layout = .single
         #expect(model.pdfView.displayMode == .singlePage)
+    }
+
+    // MARK: Undo
+
+    @Test func undoAndRedoAHighlight() throws {
+        let (model, _) = try makeReader(pages: ["Undo this highlight"])
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        model.undoManager = undo
+
+        try select("this highlight", in: model)
+        undo.beginUndoGrouping()
+        model.highlightSelection(as: .keyIdea)
+        undo.endUndoGrouping()
+        let id = try #require(model.highlights.first?.id)
+        #expect(undo.undoActionName == "Highlight")
+
+        undo.undo()
+        #expect(model.highlights.isEmpty)
+        #expect(PDFHighlights.ids(in: model.document).isEmpty)
+
+        undo.redo()
+        #expect(model.highlights.map(\.id) == [id])
+        #expect(PDFHighlights.ids(in: model.document) == [id])
+    }
+
+    @Test func undoDeleteNoteAndColorChanges() throws {
+        let (model, _) = try makeReader(pages: ["Keep this one safe"])
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        model.undoManager = undo
+        try select("Keep this", in: model)
+        // This test's undo manager needs explicit groups (the app's groups
+        // each user action automatically).
+        undo.beginUndoGrouping()
+        model.highlightSelection(as: .keyIdea)
+        undo.endUndoGrouping()
+        let record = try #require(model.highlights.first)
+        let id = record.id
+
+        undo.beginUndoGrouping()
+        model.setNote("first note", for: record)
+        undo.endUndoGrouping()
+        undo.beginUndoGrouping()
+        model.setKind(.evidence, for: record)
+        undo.endUndoGrouping()
+        undo.beginUndoGrouping()
+        model.delete(record)
+        undo.endUndoGrouping()
+        #expect(model.highlights.isEmpty)
+
+        undo.undo() // delete
+        let restored = try #require(model.highlight(id: id))
+        #expect(restored.kind == .evidence)
+        #expect(restored.note == "first note")
+
+        undo.undo() // color
+        #expect(model.highlight(id: id)?.kind == .keyIdea)
+        undo.undo() // note
+        #expect(model.highlight(id: id)?.note == "")
+    }
+
+    // MARK: Saving
+
+    @Test func savingRunsInTheBackgroundAndKeepsOtherAppsHighlights() async throws {
+        let (model, url) = try makeReader(pages: ["Sheaf text", "More text"])
+        // A highlight made by another app, already in the file.
+        let other = try #require(PDFDocument(url: url))
+        let foreign = PDFAnnotation(bounds: CGRect(x: 72, y: 690, width: 50, height: 14), forType: .highlight, withProperties: nil)
+        try #require(other.page(at: 1)).addAnnotation(foreign)
+        #expect(other.write(to: url))
+
+        try select("Sheaf text", in: model)
+        model.highlightSelection(as: .question)
+        await model.saveAndWait()
+
+        let reopened = try #require(PDFDocument(url: url))
+        #expect(PDFHighlights.ids(in: reopened).count == 1)
+        #expect(reopened.page(at: 1)?.annotations.contains { $0.type == "Highlight" } == true)
+        #expect(model.saveError == nil)
+    }
+
+    @Test func signedPDFsAreNeverRewritten() throws {
+        let url = FileManager.default.temporaryDirectory.appending(path: "Signed-\(UUID().uuidString).pdf")
+        let document = TestPDF.make(pages: ["Contract text"])
+        let field = PDFAnnotation(bounds: CGRect(x: 72, y: 100, width: 200, height: 40), forType: .widget, withProperties: nil)
+        field.widgetFieldType = .signature
+        try #require(document.page(at: 0)).addAnnotation(field)
+        #expect(document.write(to: url))
+        let before = try Data(contentsOf: url)
+
+        let snapshot = HighlightSnapshot(
+            id: UUID(), pageIndex: 0, kindRaw: 1, text: "Contract", note: "",
+            rects: [CGRect(x: 72, y: 700, width: 60, height: 14)], createdAt: .now, colorHex: 0xFFE066
+        )
+        let outcome = PDFHighlightWriter.write([snapshot], to: url)
+
+        #expect(outcome == .signed)
+        #expect(try Data(contentsOf: url) == before)
+    }
+}
+
+@MainActor
+struct WorkspaceTests {
+    private let container: ModelContainer
+    private let store: LibraryStore
+    private let preferences: UserDefaults
+
+    init() throws {
+        container = try LibraryStore.makeContainer(inMemory: true)
+        store = LibraryStore(context: container.mainContext)
+        preferences = try #require(UserDefaults(suiteName: "SheafWorkspaceTests.\(UUID().uuidString)"))
+    }
+
+    private func entry(named name: String) throws -> LibraryEntry {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "SheafWorkspace-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appending(path: "\(name).pdf")
+        #expect(TestPDF.make(pages: [name]).write(to: url))
+        return try #require(store.add(urls: [url]).first)
+    }
+
+    @Test func openingShowsThePDFAndBackShowsTheLibrary() throws {
+        let workspace = Workspace(library: store, preferences: preferences)
+        let paper = try entry(named: "Paper")
+
+        workspace.open(paper)
+        #expect(workspace.selectedDocument?.id == paper.id)
+        #expect(workspace.selectedDocument?.model != nil)
+
+        workspace.showLibrary()
+        #expect(workspace.isShowingLibrary)
+        #expect(workspace.documents.count == 1)
+    }
+
+    @Test func openingTheSamePDFTwiceKeepsOneCopy() throws {
+        let workspace = Workspace(library: store, preferences: preferences)
+        let paper = try entry(named: "Paper")
+        workspace.open(paper)
+        workspace.showLibrary()
+        workspace.open(paper)
+        #expect(workspace.documents.count == 1)
+    }
+
+    @Test func controlTabCyclesThroughLibraryAndOpenPDFs() throws {
+        let workspace = Workspace(library: store, preferences: preferences)
+        let first = try entry(named: "First")
+        let second = try entry(named: "Second")
+        workspace.open(first)
+        workspace.open(second)
+
+        workspace.selectNext()
+        #expect(workspace.isShowingLibrary)
+        workspace.selectNext()
+        #expect(workspace.selectedID == first.id)
+        workspace.selectPrevious()
+        #expect(workspace.isShowingLibrary)
+    }
+
+    @Test func closingThePDFOnScreenReturnsToTheLibrary() throws {
+        let workspace = Workspace(library: store, preferences: preferences)
+        let paper = try entry(named: "Paper")
+        workspace.open(paper)
+        workspace.close(paper.id)
+        #expect(workspace.documents.isEmpty)
+        #expect(workspace.isShowingLibrary)
+    }
+
+    @Test func openPDFsAreReopenedNextLaunch() throws {
+        let first = try entry(named: "First")
+        let second = try entry(named: "Second")
+        let workspace = Workspace(library: store, preferences: preferences)
+        workspace.open(first)
+        workspace.open(second)
+
+        let relaunched = Workspace(library: store, preferences: preferences)
+        relaunched.restore()
+
+        #expect(relaunched.documents.map(\.id) == [first.id, second.id])
+        #expect(relaunched.selectedID == second.id)
     }
 }
