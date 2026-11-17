@@ -1,35 +1,6 @@
 import AppKit
 import PDFKit
 
-/// A highlight's data, copied out of SwiftData so it can be written into a
-/// PDF on a background thread (and restored by Undo).
-nonisolated struct HighlightSnapshot: Sendable {
-    let id: UUID
-    let pageIndex: Int
-    let kindRaw: Int
-    let text: String
-    let note: String
-    let rects: [CGRect]
-    let createdAt: Date
-    /// The highlight color on the page, as 0xRRGGBB.
-    let colorHex: UInt32
-}
-
-extension HighlightSnapshot {
-    init(_ record: HighlightRecord) {
-        self.init(
-            id: record.id,
-            pageIndex: record.pageIndex,
-            kindRaw: record.kindRaw,
-            text: record.text,
-            note: record.note,
-            rects: record.rects,
-            createdAt: record.createdAt,
-            colorHex: record.kind.pageColorHex
-        )
-    }
-}
-
 /// Writes Sheaf's highlights into a PDF file, away from the main thread.
 ///
 /// Saving a long PDF can take several seconds, so it works on its own copy
@@ -128,37 +99,4 @@ nonisolated enum PDFHighlightWriter {
         }
         return false
     }
-}
-
-/// Keeps track of saves in progress, so quitting can wait for them.
-final class SaveTracker {
-    static let shared = SaveTracker()
-
-    private var tasks: [UUID: Task<Void, Never>] = [:]
-
-    var isSaving: Bool { !tasks.isEmpty }
-
-    func track(_ task: Task<Void, Never>) {
-        let id = UUID()
-        tasks[id] = task
-        Task { [weak self] in
-            await task.value
-            self?.tasks[id] = nil
-        }
-    }
-
-    func waitForAll() async {
-        while !tasks.isEmpty {
-            for task in Array(tasks.values) {
-                await task.value
-            }
-            // Let finished tasks remove themselves before checking again.
-            await Task.yield()
-        }
-    }
-}
-
-extension Notification.Name {
-    /// Posted when the app is about to quit: readers start any pending save now.
-    static let sheafFlushSaves = Notification.Name("SheafFlushSaves")
 }

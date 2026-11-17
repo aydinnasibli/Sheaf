@@ -38,6 +38,6 @@ struct SheafApp: App {
         }
         .defaultSize(width: 1280, height: 820)
         .windowToolbarStyle(.unified(showsTitle: false))
-        .commands { ReaderCommands(workspace: workspace) }
+        .commands { SheafCommands(workspace: workspace) }
     }
 }

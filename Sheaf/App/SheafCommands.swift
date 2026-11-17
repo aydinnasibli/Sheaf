@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Menu bar items. They act on what's on screen: the library or a PDF.
-struct ReaderCommands: Commands {
+struct SheafCommands: Commands {
     let workspace: Workspace
 
     /// The PDF on screen. Read from the workspace rather than keyboard

@@ -1,31 +1,5 @@
 import SwiftUI
 
-// Small building blocks shared by the library and the reader, drawn to
-// match the direction C mockups.
-
-extension ToolbarContent {
-    /// Removes the glass capsule macOS 26 draws behind toolbar items, so the
-    /// header matches Sheaf's own design. No effect on earlier macOS versions.
-    @ToolbarContentBuilder
-    func plainBackground() -> some ToolbarContent {
-        if #available(macOS 26.0, *) {
-            sharedBackgroundVisibility(.hidden)
-        } else {
-            self
-        }
-    }
-}
-
-extension View {
-    /// The Sheaf header: background color and no title text in the toolbar.
-    /// The window title is still set, so tabs and the Window menu show it.
-    func sheafHeader() -> some View {
-        toolbar(removing: .title)
-            .toolbarBackground(Theme.background, for: .windowToolbar)
-            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
-    }
-}
-
 /// A 1-point line in the border color.
 struct Hairline: View {
     var axis: Axis = .horizontal
@@ -169,54 +143,6 @@ struct SectionLabel: View {
             .font(Theme.sectionLabel)
             .tracking(0.7)
             .foregroundStyle(Theme.inkMuted)
-    }
-}
-
-/// Lays children out in rows, wrapping to a new row when one is full.
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = arrange(subviews, maxWidth: proposal.width ?? .infinity)
-        let width = rows.map { $0.width }.max() ?? 0
-        let height = rows.reduce(0) { $0 + $1.height } + spacing * CGFloat(max(rows.count - 1, 0))
-        return CGSize(width: proposal.width ?? width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in arrange(subviews, maxWidth: bounds.width) {
-            var x = bounds.minX
-            for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-                x += size.width + spacing
-            }
-            y += row.height + spacing
-        }
-    }
-
-    private struct Row {
-        var indices: [Int] = []
-        var width: CGFloat = 0
-        var height: CGFloat = 0
-    }
-
-    private func arrange(_ subviews: Subviews, maxWidth: CGFloat) -> [Row] {
-        var rows = [Row()]
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            let needed = rows[rows.count - 1].indices.isEmpty ? size.width : rows[rows.count - 1].width + spacing + size.width
-            if needed > maxWidth, !rows[rows.count - 1].indices.isEmpty {
-                rows.append(Row())
-            }
-            var row = rows[rows.count - 1]
-            row.width = row.indices.isEmpty ? size.width : row.width + spacing + size.width
-            row.height = max(row.height, size.height)
-            row.indices.append(index)
-            rows[rows.count - 1] = row
-        }
-        return rows
     }
 }
 
