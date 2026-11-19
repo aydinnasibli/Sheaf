@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Receives PDFs opened from Finder, and makes quitting wait for saves.
+/// Receives PDFs opened from Finder and highlights picked in Spotlight,
+/// and makes quitting wait for saves.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyMonitor: Any?
 
@@ -26,6 +27,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         WindowRouter.shared.open(urls: urls.filter(\.isFileURL))
+    }
+
+    /// A highlight picked in Spotlight: opens its PDF there.
+    func application(
+        _ application: NSApplication,
+        continue userActivity: NSUserActivity,
+        restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void
+    ) -> Bool {
+        SpotlightResult.open(userActivity)
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

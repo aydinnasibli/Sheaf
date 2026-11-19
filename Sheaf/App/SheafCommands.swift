@@ -11,6 +11,7 @@ struct SheafCommands: Commands {
     @AppStorage("showsThumbnails") private var showsThumbnails = true
     @AppStorage("showsHighlightsPanel") private var showsHighlightsPanel = true
     @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         // Sheaf > Check for Updates…, under About Sheaf as in other Mac apps.
@@ -46,27 +47,51 @@ struct SheafCommands: Commands {
                 .disabled(reader == nil)
         }
 
-        // Edit > Find. Replaces the text-editing group, which a reader doesn't need.
+        // Edit > Find and Edit > Speech. Replaces the text-editing group,
+        // whose spelling and text-changing items a reader doesn't need.
+        // When a shortcut changes anywhere in this file, update the Help
+        // window's table (Help/ShortcutList.swift) too.
         CommandGroup(replacing: .textEditing) {
-            Button("Find\u{2026}") {
-                if let reader {
-                    reader.searchFocusRequest += 1
-                } else {
+            Menu("Find") {
+                Button("Find\u{2026}") {
+                    if let reader {
+                        reader.searchFocusRequest += 1
+                    } else {
+                        workspace.librarySearchRequest += 1
+                    }
+                }
+                .keyboardShortcut("f")
+                Button("Search Library") {
+                    WindowRouter.shared.showLibrary()
                     workspace.librarySearchRequest += 1
                 }
+                .keyboardShortcut("k")
+                Button("Find Next") { reader?.selectNextResult() }
+                    .keyboardShortcut("g")
+                    .disabled(reader?.searchResults.isEmpty ?? true)
+                Button("Find Previous") { reader?.selectPreviousResult() }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .disabled(reader?.searchResults.isEmpty ?? true)
+                // Menus can't tell whether text is selected, so with nothing
+                // selected this beeps, as in other Mac apps.
+                Button("Use Selection for Find") {
+                    if reader?.useSelectionForFind() != true { NSSound.beep() }
+                }
+                .keyboardShortcut("e")
+                .disabled(reader == nil)
             }
-            .keyboardShortcut("f")
-            Button("Search Library") {
-                WindowRouter.shared.showLibrary()
-                workspace.librarySearchRequest += 1
+            Menu("Speech") {
+                Button("Start Speaking") {
+                    if let text = reader?.textToSpeak {
+                        Speaker.shared.speak(text)
+                    } else {
+                        NSSound.beep()
+                    }
+                }
+                .disabled(reader == nil)
+                Button("Stop Speaking") { Speaker.shared.stop() }
+                    .disabled(!Speaker.shared.isSpeaking)
             }
-            .keyboardShortcut("k")
-            Button("Find Next") { reader?.selectNextResult() }
-                .keyboardShortcut("g")
-                .disabled(reader?.searchResults.isEmpty ?? true)
-            Button("Find Previous") { reader?.selectPreviousResult() }
-                .keyboardShortcut("g", modifiers: [.command, .shift])
-                .disabled(reader?.searchResults.isEmpty ?? true)
         }
 
         // View menu
@@ -169,6 +194,12 @@ struct SheafCommands: Commands {
             ))
             .keyboardShortcut("d")
             .disabled(reader?.entry == nil)
+        }
+
+        // Help > Sheaf Help opens Sheaf's own help window.
+        CommandGroup(replacing: .help) {
+            Button("Sheaf Help") { openWindow(id: HelpView.windowID) }
+                .keyboardShortcut("?", modifiers: .command)
         }
     }
 }

@@ -359,7 +359,7 @@
 				INFOPLIST_FILE = Sheaf/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Sheaf;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Aydin Nasibli";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -396,7 +396,7 @@
 				INFOPLIST_FILE = Sheaf/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Sheaf;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Aydin Nasibli";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

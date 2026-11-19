@@ -1,3 +1,4 @@
+import CoreSpotlight
 import SwiftData
 import SwiftUI
 
@@ -35,6 +36,9 @@ struct SheafApp: App {
         WindowRouter.shared.workspace = workspace
         // Start checking for new builds as soon as Sheaf opens.
         _ = Updater.shared
+        if !Self.isRunningTests {
+            SpotlightIndex.start(for: library)
+        }
     }
 
     var body: some Scene {
@@ -44,10 +48,28 @@ struct SheafApp: App {
                 .environment(library)
                 .environment(workspace)
                 .modelContainer(container)
+                // A highlight picked in Spotlight (the app delegate may get it instead).
+                .onContinueUserActivity(CSSearchableItemActionType) { SpotlightResult.open($0) }
         }
         .defaultSize(width: 1280, height: 820)
         .defaultLaunchBehavior(Self.isRunningTests ? .suppressed : .automatic)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands { SheafCommands(workspace: workspace) }
+
+        // Help > Sheaf Help (⌘?). Opened from the Help menu only, so it isn't
+        // listed in the Window menu, and it doesn't reopen at launch.
+        Window("Sheaf Help", id: HelpView.windowID) {
+            HelpView()
+        }
+        .defaultSize(width: 860, height: 660)
+        .windowResizability(.contentMinSize)
+        .commandsRemoved()
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
+
+        // Sheaf > Settings (⌘,).
+        Settings {
+            SettingsView(workspace: workspace)
+        }
     }
 }

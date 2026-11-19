@@ -17,6 +17,9 @@ final class Updater {
     /// False while a check is already running, or in builds that don't update.
     private(set) var canCheckForUpdates = false
 
+    /// False in builds run from Xcode, which never update (see `init`).
+    let isAvailable: Bool
+
     @ObservationIgnored private let controller: SPUStandardUpdaterController
     @ObservationIgnored private var observation: NSKeyValueObservation?
 
@@ -28,6 +31,7 @@ final class Updater {
         #else
         let startsUpdater = true
         #endif
+        isAvailable = startsUpdater
         controller = SPUStandardUpdaterController(
             startingUpdater: startsUpdater, updaterDelegate: nil, userDriverDelegate: nil)
         observation = controller.updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] _, change in
@@ -39,4 +43,22 @@ final class Updater {
     func checkForUpdates() {
         controller.checkForUpdates(nil)
     }
+
+    /// Settings > Updates. Sparkle keeps the choice in Sheaf's preferences
+    /// (it starts on, from `SUEnableAutomaticChecks` in Info.plist), so this
+    /// reads and writes Sparkle directly instead of keeping a copy.
+    var automaticallyChecksForUpdates: Bool {
+        get {
+            access(keyPath: \.automaticallyChecksForUpdates)
+            return controller.updater.automaticallyChecksForUpdates
+        }
+        set {
+            withMutation(keyPath: \.automaticallyChecksForUpdates) {
+                controller.updater.automaticallyChecksForUpdates = newValue
+            }
+        }
+    }
+
+    /// When Sheaf last looked for a new build, or `nil` if it never has.
+    var lastCheckDate: Date? { controller.updater.lastUpdateCheckDate }
 }

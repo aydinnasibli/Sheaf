@@ -12,6 +12,9 @@ final class LibraryStore {
 
     /// Files Sheaf is currently allowed to read through a bookmark.
     @ObservationIgnored private var accessedURLs = Set<URL>()
+    /// Spotlight's copy of the highlights, kept current by the highlight
+    /// methods below. `nil` in tests, which never touch Spotlight.
+    @ObservationIgnored var searchIndex: (any HighlightIndexing)?
 
     init(context: ModelContext) {
         self.context = context
@@ -38,6 +41,7 @@ final class LibraryStore {
         context.insert(record)
         record.entry = entry
         save()
+        searchIndex?.index(record)
         return record
     }
 
@@ -56,22 +60,27 @@ final class LibraryStore {
         context.insert(record)
         record.entry = entry
         save()
+        searchIndex?.index(record)
         return record
     }
 
     func setNote(_ note: String, for record: HighlightRecord) {
         record.note = note.trimmingCharacters(in: .whitespacesAndNewlines)
         save()
+        searchIndex?.index(record)
     }
 
     func setKind(_ kind: HighlightKind, for record: HighlightRecord) {
         record.kind = kind
         save()
+        searchIndex?.index(record)
     }
 
     func delete(_ record: HighlightRecord) {
+        let id = record.id
         context.delete(record)
         save()
+        searchIndex?.remove(highlightIDs: [id])
     }
 
     // MARK: Adding and opening
@@ -162,8 +171,10 @@ final class LibraryStore {
 
     /// Removes PDFs from the library. The files themselves are left alone.
     func remove(_ items: [LibraryEntry]) {
+        let ids = items.map(\.id)
         for item in items { context.delete(item) }
         save()
+        searchIndex?.remove(pdfIDs: ids)
     }
 
     @discardableResult
