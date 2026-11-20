@@ -80,6 +80,9 @@ struct PenPicker: View {
 /// Single / Two pages / Scroll. The picked layout shows its name.
 struct LayoutSwitch: View {
     @Bindable var model: ReaderModel
+    /// In a narrower window only the icons show; each still names its
+    /// layout in its tooltip and to VoiceOver.
+    var isCompact = false
 
     var body: some View {
         HStack(spacing: 2) {
@@ -88,14 +91,14 @@ struct LayoutSwitch: View {
                 Button { model.layout = layout } label: {
                     HStack(spacing: 6) {
                         Image(systemName: icon(for: layout)).font(.system(size: 12, weight: .semibold))
-                        if isOn {
+                        if isOn && !isCompact {
                             Text(layout.title)
                                 .font(.system(size: 12, weight: .semibold))
                                 .fixedSize()
                         }
                     }
                     .fixedSize()
-                    .padding(.horizontal, isOn ? 10 : 0)
+                    .padding(.horizontal, isOn && !isCompact ? 10 : 0)
                     .frame(minWidth: 34)
                     .frame(height: 28)
                     .foregroundStyle(isOn ? Theme.onAccent : Theme.inkSecondary)

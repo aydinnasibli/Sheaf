@@ -133,7 +133,10 @@ struct ReaderLayout: View {
     /// "xii (14 of 244)" in the page pill; below, only "xii".
     private var showsFullPageNumber: Bool { width >= 1600 }
     private var showsPenNames: Bool { width >= 1540 }
-    private var showsZoom: Bool { width >= 1300 }
+    /// The picked layout's name; below, the layout buttons are icons only,
+    /// which leaves room for the zoom controls in a 1280-point window.
+    private var showsLayoutName: Bool { width >= 1440 }
+    private var showsZoom: Bool { width >= 1240 }
     private var showsLayoutSwitch: Bool { width >= 1100 }
     private var showsPickedPenName: Bool { width >= 860 }
     private var showsFocusButton: Bool { width >= 860 || isFocusMode }
@@ -358,7 +361,7 @@ struct ReaderLayout: View {
         ToolbarItem(placement: .primaryAction) {
             HStack(spacing: 8) {
                 if showsLayoutSwitch {
-                    LayoutSwitch(model: model)
+                    LayoutSwitch(model: model, isCompact: !showsLayoutName)
                 }
                 PagePill(model: model, isCompact: !showsFullPageNumber)
                 if showsZoom {
