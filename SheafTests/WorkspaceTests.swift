@@ -25,29 +25,39 @@ struct WorkspaceTests {
         return try #require(store.add(urls: [url]).first)
     }
 
-    @Test func openingShowsThePDFAndBackShowsTheLibrary() throws {
+    /// PDFs load in the background; lets them finish before this test's
+    /// library goes away.
+    private func finishLoading(_ workspaces: Workspace...) async {
+        for document in workspaces.flatMap(\.documents) {
+            await document.waitUntilLoaded()
+        }
+    }
+
+    @Test func openingShowsThePDFAndBackShowsTheLibrary() async throws {
         let workspace = Workspace(library: store, preferences: preferences)
         let paper = try entry(named: "Paper")
 
         workspace.open(paper)
         #expect(workspace.selectedDocument?.id == paper.id)
-        #expect(workspace.selectedDocument?.model != nil)
+        // The file is read in the background.
+        try await waitUntil { workspace.selectedDocument?.model != nil }
 
         workspace.showLibrary()
         #expect(workspace.isShowingLibrary)
         #expect(workspace.documents.count == 1)
     }
 
-    @Test func openingTheSamePDFTwiceKeepsOneCopy() throws {
+    @Test func openingTheSamePDFTwiceKeepsOneCopy() async throws {
         let workspace = Workspace(library: store, preferences: preferences)
         let paper = try entry(named: "Paper")
         workspace.open(paper)
         workspace.showLibrary()
         workspace.open(paper)
         #expect(workspace.documents.count == 1)
+        await finishLoading(workspace)
     }
 
-    @Test func controlTabCyclesThroughLibraryAndOpenPDFs() throws {
+    @Test func controlTabCyclesThroughLibraryAndOpenPDFs() async throws {
         let workspace = Workspace(library: store, preferences: preferences)
         let first = try entry(named: "First")
         let second = try entry(named: "Second")
@@ -60,18 +70,21 @@ struct WorkspaceTests {
         #expect(workspace.selectedID == first.id)
         workspace.selectPrevious()
         #expect(workspace.isShowingLibrary)
+        await finishLoading(workspace)
     }
 
-    @Test func closingThePDFOnScreenReturnsToTheLibrary() throws {
+    @Test func closingThePDFOnScreenReturnsToTheLibrary() async throws {
         let workspace = Workspace(library: store, preferences: preferences)
         let paper = try entry(named: "Paper")
         workspace.open(paper)
+        let document = try #require(workspace.selectedDocument)
         workspace.close(paper.id)
         #expect(workspace.documents.isEmpty)
         #expect(workspace.isShowingLibrary)
+        await document.waitUntilLoaded()
     }
 
-    @Test func focusModeLastsWhileSwitchingPDFsAndEndsInTheLibrary() throws {
+    @Test func focusModeLastsWhileSwitchingPDFsAndEndsInTheLibrary() async throws {
         let workspace = Workspace(library: store, preferences: preferences)
         let first = try entry(named: "First")
         let second = try entry(named: "Second")
@@ -89,9 +102,10 @@ struct WorkspaceTests {
         workspace.isFocusMode = true
         workspace.close(first.id)
         #expect(!workspace.isFocusMode)
+        await finishLoading(workspace)
     }
 
-    @Test func openPDFsAreReopenedNextLaunch() throws {
+    @Test func openPDFsAreReopenedNextLaunch() async throws {
         let first = try entry(named: "First")
         let second = try entry(named: "Second")
         let workspace = Workspace(library: store, preferences: preferences)
@@ -103,5 +117,10 @@ struct WorkspaceTests {
 
         #expect(relaunched.documents.map(\.id) == [first.id, second.id])
         #expect(relaunched.selectedID == second.id)
+        // Only the PDF on screen loads; the other waits until it's shown.
+        #expect(relaunched.documents.map(\.hasStartedLoading) == [false, true])
+        relaunched.select(first.id)
+        #expect(relaunched.documents[0].hasStartedLoading)
+        await finishLoading(workspace, relaunched)
     }
 }

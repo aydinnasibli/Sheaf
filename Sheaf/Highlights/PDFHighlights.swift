@@ -52,6 +52,18 @@ enum PDFHighlights {
         return missing.count
     }
 
+    /// Makes a PDF that was just opened match the library: adds highlights
+    /// the file is missing and takes out ones deleted in Sheaf that are
+    /// still in it (a save didn't finish, or they were deleted while the PDF
+    /// was closed). Returns whether the file needs saving.
+    static func bringUpToDate(_ document: PDFDocument, with records: [HighlightRecord], removedIDs: [UUID]) -> Bool {
+        let current = Set(records.map(\.id))
+        let present = ids(in: document)
+        let stale = Set(removedIDs).subtracting(current).intersection(present)
+        for id in stale { remove(id, from: document) }
+        return restoreMissing(records, in: document) > 0 || !stale.isEmpty
+    }
+
     static func id(of annotation: PDFAnnotation) -> UUID? {
         PDFHighlightWriter.id(of: annotation)
     }

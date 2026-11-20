@@ -115,6 +115,9 @@ final class ReaderModel {
     enum FileWriteBlock {
         case passwordProtected
         case signed
+        /// The library couldn't be opened, so this session nothing is
+        /// written into PDF files.
+        case temporaryLibrary
 
         var explanation: String {
             switch self {
@@ -122,6 +125,8 @@ final class ReaderModel {
                 "This PDF is password-protected, so highlights are kept in Sheaf\u{2019}s library and not written into the file."
             case .signed:
                 "This PDF is digitally signed, so highlights are kept in Sheaf\u{2019}s library and not written into the file (that would break the signature)."
+            case .temporaryLibrary:
+                "Sheaf couldn\u{2019}t open your library, so this time nothing is written into PDF files, and new highlights are kept only until Sheaf quits."
             }
         }
     }
@@ -181,8 +186,13 @@ final class ReaderModel {
         if document.isEncrypted {
             fileWriteBlock = .passwordProtected
         }
+        if store?.isTemporaryLibrary == true {
+            fileWriteBlock = .temporaryLibrary
+        }
         refreshHighlights()
-        if PDFHighlights.restoreMissing(highlights, in: document) > 0 {
+        // Changes that didn't reach the file last time are saved now.
+        if PDFHighlights.bringUpToDate(document, with: highlights, removedIDs: entry?.removedHighlightIDs ?? [])
+            || entry?.needsFileSave == true {
             scheduleSave()
         }
         observeNotifications()
@@ -677,13 +687,43 @@ final class ReaderModel {
 
     // MARK: Saving into the PDF
 
+    /// Pauses before each new try after a save failed. A new change, leaving
+    /// the PDF, quitting or opening the PDF again also tries again.
+    @ObservationIgnored var saveRetryDelays: [Duration] = [.seconds(5), .seconds(20), .seconds(60)]
+    @ObservationIgnored private var failedSaveCount = 0
+    @ObservationIgnored private var cachedSaveDelay: Duration?
+
+    /// How long to wait after the last change before writing the file.
+    /// Every save rewrites the whole file, so big files save less often
+    /// (they're always saved when you leave the PDF and when Sheaf quits).
+    nonisolated static func saveDelay(forFileSize bytes: Int) -> Duration {
+        let small = 10_000_000, large = 50_000_000
+        guard bytes > small else { return .milliseconds(1500) }
+        guard bytes < large else { return .seconds(20) }
+        let fraction = Double(bytes - small) / Double(large - small)
+        return .milliseconds(Int(1500 + fraction * 18_500))
+    }
+
+    private var saveDelay: Duration {
+        if let cachedSaveDelay { return cachedSaveDelay }
+        let size = fileURL.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize } ?? 0
+        let delay = Self.saveDelay(forFileSize: size)
+        cachedSaveDelay = delay
+        return delay
+    }
+
     /// Writes highlights into the file shortly after the last change, so a
     /// burst of highlighting causes one save.
     private func scheduleSave() {
         hasUnsavedChanges = true
+        failedSaveCount = 0
+        saveLater(after: saveDelay)
+    }
+
+    private func saveLater(after delay: Duration) {
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.5))
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             self?.startSave()
         }
@@ -704,34 +744,68 @@ final class ReaderModel {
     /// Saves run one after another on a background thread: writing a long
     /// PDF can take several seconds, and reading must not freeze meanwhile.
     private func startSave() {
-        guard hasUnsavedChanges, let fileURL, fileWriteBlock == nil else { return }
+        guard hasUnsavedChanges, fileURL != nil, fileWriteBlock == nil else { return }
+        guard let url = currentFileURL() else {
+            didFailToSave(fileName: fileURL?.lastPathComponent ?? title)
+            return
+        }
         hasUnsavedChanges = false
         let snapshots = highlights.map(HighlightSnapshot.init)
+        // Deleted highlights to take out of the file, and only those: any
+        // other Sheaf highlight in it stays.
+        let removed = Set(entry?.removedHighlightIDs ?? []).subtracting(snapshots.map(\.id))
+        let archive = entry.flatMap { entry in
+            store?.originalsFolder.map { OriginalPDFArchive(folder: $0, pdfID: entry.id) }
+        }
         let previous = saveChain
-        let task = Task { [weak self] in
+        let task = Task { [weak self, entry, store] in
             await previous?.value
             let outcome = await Task.detached(priority: .utility) {
-                PDFHighlightWriter.write(snapshots, to: fileURL)
+                PDFHighlightWriter.write(snapshots, removing: removed, to: url, keepingOriginalIn: archive)
             }.value
-            self?.finishSave(outcome, fileName: fileURL.lastPathComponent)
+            // Recorded even if the PDF was closed meanwhile.
+            if outcome == .saved, let entry, let store {
+                store.didWriteHighlights(of: entry, to: url, removed: removed, isUpToDate: !(self?.hasUnsavedChanges ?? false))
+            }
+            self?.finishSave(outcome, url: url)
         }
         saveChain = task
-        SaveTracker.shared.track(task)
+        SaveTracker.shared.track(task, fileName: url.lastPathComponent)
     }
 
-    private func finishSave(_ outcome: PDFHighlightWriter.Outcome, fileName: String) {
+    /// The file to save into, found again through its bookmark before each
+    /// save, so a PDF that's moved or renamed while it's open still saves.
+    private func currentFileURL() -> URL? {
+        guard let entry, let store else { return fileURL }
+        return store.resolveFile(for: entry)
+    }
+
+    private func finishSave(_ outcome: PDFHighlightWriter.Outcome, url: URL) {
         switch outcome {
         case .saved:
             saveError = nil
+            failedSaveCount = 0
         case .signed:
             fileWriteBlock = .signed
             saveError = nil
         case .passwordProtected:
             fileWriteBlock = .passwordProtected
             saveError = nil
-        case .failed:
-            saveError = "Couldn\u{2019}t save highlights into \u{201C}\(fileName)\u{201D}. They\u{2019}re still kept in Sheaf\u{2019}s library."
+        case .failed(let reason):
+            NSLog("Sheaf: couldn\u{2019}t save highlights into \(url.path(percentEncoded: false)): \(reason)")
+            didFailToSave(fileName: url.lastPathComponent)
         }
+    }
+
+    /// Keeps the changes marked unsaved and tries again after a pause, a
+    /// few times. The highlights themselves are safe in the library.
+    private func didFailToSave(fileName: String) {
+        hasUnsavedChanges = true
+        saveError = "Couldn\u{2019}t save highlights into \u{201C}\(fileName)\u{201D} yet. They\u{2019}re safe in Sheaf\u{2019}s library, and Sheaf will try again."
+        guard failedSaveCount < saveRetryDelays.count else { return }
+        let delay = saveRetryDelays[failedSaveCount]
+        failedSaveCount += 1
+        saveLater(after: delay)
     }
 
     // MARK: Search

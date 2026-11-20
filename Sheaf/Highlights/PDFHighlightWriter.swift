@@ -5,7 +5,12 @@ import PDFKit
 ///
 /// Saving a long PDF can take several seconds, so it works on its own copy
 /// of the document: it reads the file, replaces the Sheaf highlights with
-/// the current set, and writes it back. Highlights from other apps are kept.
+/// the current set, and writes it back. Highlights from other apps are kept,
+/// and so are Sheaf highlights the library doesn't know about (the file may
+/// have been highlighted before it was removed from the library, say).
+///
+/// The new file is checked before it replaces the old one, and replaces it
+/// in one step, so a failed save leaves the file as it was.
 nonisolated enum PDFHighlightWriter {
     enum Outcome: Sendable, Equatable {
         case saved
@@ -21,11 +26,22 @@ nonisolated enum PDFHighlightWriter {
     static let idKey = PDFAnnotationKey(rawValue: "/SheafID")
     static let prefix = "sheaf-"
 
-    static func write(_ highlights: [HighlightSnapshot], to url: URL) -> Outcome {
+    /// Writes `highlights` into the PDF at `url`.
+    ///
+    /// Only the Sheaf highlights in `highlights` (written again) and in
+    /// `removedIDs` (deleted in Sheaf) are taken out of the file first; any
+    /// other Sheaf highlight in it stays. With an `archive`, a copy of the
+    /// file as it was is kept the first time Sheaf rewrites it.
+    static func write(
+        _ highlights: [HighlightSnapshot],
+        removing removedIDs: Set<UUID> = [],
+        to url: URL,
+        keepingOriginalIn archive: OriginalPDFArchive? = nil
+    ) -> Outcome {
         var coordinationError: NSError?
         var outcome = Outcome.failed("The file couldn\u{2019}t be written.")
-        NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: [], error: &coordinationError) { target in
-            outcome = writeNow(highlights, to: target)
+        NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: .forReplacing, error: &coordinationError) { target in
+            outcome = writeNow(highlights, removing: removedIDs, to: target, archive: archive)
         }
         if let coordinationError {
             return .failed(coordinationError.localizedDescription)
@@ -33,19 +49,23 @@ nonisolated enum PDFHighlightWriter {
         return outcome
     }
 
-    private static func writeNow(_ highlights: [HighlightSnapshot], to url: URL) -> Outcome {
-        // Read the whole file into memory first: the file is then rewritten
-        // in place (Sheaf may write the file but not its folder).
+    private static func writeNow(
+        _ highlights: [HighlightSnapshot], removing removedIDs: Set<UUID>, to url: URL, archive: OriginalPDFArchive?
+    ) -> Outcome {
         guard let original = try? Data(contentsOf: url), let document = PDFDocument(data: original) else {
             return .failed("The file couldn\u{2019}t be read.")
         }
         if document.isEncrypted { return .passwordProtected }
         if isSigned(document) { return .signed }
+        let pageCount = document.pageCount
 
-        for index in 0..<document.pageCount {
+        let rewritten = Set(highlights.map(\.id)).union(removedIDs)
+        for index in 0..<pageCount {
             guard let page = document.page(at: index) else { continue }
-            for annotation in page.annotations where id(of: annotation) != nil {
-                page.removeAnnotation(annotation)
+            for annotation in page.annotations {
+                if let id = id(of: annotation), rewritten.contains(id) {
+                    page.removeAnnotation(annotation)
+                }
             }
         }
         for highlight in highlights {
@@ -58,12 +78,29 @@ nonisolated enum PDFHighlightWriter {
         guard let data = document.dataRepresentation() else {
             return .failed("PDFKit couldn\u{2019}t save the file.")
         }
+        guard isComplete(data, pageCount: pageCount, highlights: highlights) else {
+            return .failed("The new version of the file didn\u{2019}t check out, so the file was left as it was.")
+        }
+        archive?.keepCopy(of: original, fileName: url.lastPathComponent)
         do {
-            try data.write(to: url)
+            try SafeFileWriter.replace(url, with: data)
             return .saved
         } catch {
             return .failed(error.localizedDescription)
         }
+    }
+
+    /// Whether `data` is a PDF that opens again, with all `pageCount` pages
+    /// and every highlight just written. Checked before it replaces the file.
+    static func isComplete(_ data: Data, pageCount: Int, highlights: [HighlightSnapshot]) -> Bool {
+        guard let check = PDFDocument(data: data), check.pageCount == pageCount else { return false }
+        let written = highlights.filter { (0..<pageCount).contains($0.pageIndex) && !$0.rects.isEmpty }
+        for (index, onPage) in Dictionary(grouping: written, by: \.pageIndex) {
+            guard let page = check.page(at: index) else { return false }
+            let present = Set(page.annotations.compactMap(id(of:)))
+            guard onPage.allSatisfy({ present.contains($0.id) }) else { return false }
+        }
+        return true
     }
 
     /// One highlight annotation per line of the highlight.

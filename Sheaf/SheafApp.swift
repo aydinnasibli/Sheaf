@@ -15,17 +15,16 @@ struct SheafApp: App {
     static let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
     init() {
-        let container: ModelContainer
-        do {
-            container = try LibraryStore.makeContainer(inMemory: Self.isRunningTests)
-        } catch {
-            // Keep the app usable even if the library file can't be opened;
-            // the library just won't be saved this session.
-            NSLog("Sheaf: couldn't open the library (\(error)); using a temporary one.")
-            container = try! LibraryStore.makeContainer(inMemory: true)
-        }
+        // The library is backed up before it opens. If it can't be opened,
+        // Sheaf stays usable with a temporary library, writes nothing into
+        // PDF files, and says so (see AppDelegate).
+        let (container, isTemporaryLibrary) = LibraryStore.openLibrary(inMemory: Self.isRunningTests)
         self.container = container
-        let library = LibraryStore(context: container.mainContext)
+        let library = LibraryStore(
+            context: container.mainContext,
+            isTemporaryLibrary: isTemporaryLibrary,
+            originalsFolder: Self.isRunningTests ? nil : OriginalPDFArchive.standardFolder
+        )
         let workspace = Workspace(library: library)
         if !Self.isRunningTests {
             workspace.restore()

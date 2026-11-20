@@ -24,6 +24,13 @@ final class LibraryEntry {
     /// Bookmarked pages (0-based), in order. Kept in Sheaf only: PDF has no
     /// standard place for page bookmarks.
     var bookmarkedPages: [Int] = []
+    /// Highlight changes not yet written into the PDF file (Sheaf quit
+    /// before a save finished, or it failed). Opening the PDF saves them.
+    var needsFileSave = false
+    /// Highlights deleted in Sheaf that may still be in the PDF file. The
+    /// next save takes them out; until then, opening the file doesn't bring
+    /// them back into the library.
+    var removedHighlightIDs: [UUID] = []
     /// A small image of the first page, as PNG.
     @Attribute(.externalStorage) var cover: Data?
     var collection: PDFCollection?

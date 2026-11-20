@@ -140,7 +140,7 @@ struct TextIndexTests {
         #expect(await reopened.pages(for: removedID) == nil)
     }
 
-    @Test func aMatchOpensThePDFAtItsPage() throws {
+    @Test func aMatchOpensThePDFAtItsPage() async throws {
         let entry = try #require(store.add(urls: [try writePDF(pages: ["1", "2", "3", "4"])]).first)
         let preferences = try #require(UserDefaults(suiteName: "SheafTextIndexTests.\(UUID().uuidString)"))
         let workspace = Workspace(library: store, preferences: preferences)
@@ -149,5 +149,7 @@ struct TextIndexTests {
 
         #expect(workspace.selectedDocument?.id == entry.id)
         #expect(workspace.selectedDocument?.pendingPageIndex == 2)
+        // PDFs load in the background; let it finish before this test's library goes away.
+        await workspace.selectedDocument?.waitUntilLoaded()
     }
 }

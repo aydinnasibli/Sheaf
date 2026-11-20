@@ -21,6 +21,7 @@ struct MainWindow: View {
                 LibraryScreen()
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) { LibraryNotice() }
         .frame(minWidth: 760, minHeight: 480)
         // In full screen the header slides away and comes back when the
         // pointer reaches the top of the screen, as in Preview and Books.

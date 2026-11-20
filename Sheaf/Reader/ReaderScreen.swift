@@ -16,6 +16,8 @@ struct ReaderScreen: View {
             switch document.phase {
             case .loading:
                 DelayedProgressView()
+            case .downloading:
+                DownloadingView()
             case .locked:
                 UnlockView { document.unlock(with: $0) }
             case .ready(let model):

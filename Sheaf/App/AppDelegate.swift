@@ -23,6 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return nil
         }
+        if WindowRouter.shared.library?.isTemporaryLibrary == true {
+            // Once the window is up.
+            Task { SafetyAlerts.showLibraryCouldNotOpen() }
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -42,10 +46,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start any save that was waiting for a pause in highlighting…
         NotificationCenter.default.post(name: .sheafFlushSaves, object: nil)
         guard SaveTracker.shared.isSaving else { return .terminateNow }
-        // …and quit once highlights are safely written into the files.
+        // …and quit once highlights are safely written into the files. A
+        // save that takes longer than that (a slow or disconnected drive)
+        // shouldn't keep Sheaf open: ask instead.
         Task {
-            await SaveTracker.shared.waitForAll()
-            NSApp.reply(toApplicationShouldTerminate: true)
+            let finished = await SaveTracker.shared.waitForAll(timeout: .seconds(10))
+            let quit = finished || SafetyAlerts.confirmQuitWhileSaving(fileNames: SaveTracker.shared.fileNames)
+            NSApp.reply(toApplicationShouldTerminate: quit)
         }
         return .terminateLater
     }

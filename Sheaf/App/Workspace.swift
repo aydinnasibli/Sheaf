@@ -11,7 +11,12 @@ final class Workspace {
     private(set) var documents: [OpenDocument] = []
     /// The PDF on screen, or `nil` for the library.
     private(set) var selectedID: UUID? {
-        didSet { if selectedID == nil { isFocusMode = false } }
+        didSet {
+            if selectedID == nil { isFocusMode = false }
+            // Each PDF loads the first time it's shown, so the ones reopened
+            // at launch don't all load at once.
+            selectedDocument?.loadIfNeeded()
+        }
     }
     /// Incremented by Find / Search Library (⌘F, ⌘K) to focus the library's search field.
     var librarySearchRequest = 0
@@ -94,7 +99,8 @@ final class Workspace {
 
     // MARK: Remembering open PDFs between launches
 
-    /// Reopens the PDFs that were open when Sheaf last quit.
+    /// Reopens the PDFs that were open when Sheaf last quit. Only the one on
+    /// screen loads now; the others load when they're shown.
     func restore() {
         let ids = (preferences.stringArray(forKey: Self.openKey) ?? []).compactMap(UUID.init(uuidString:))
         for id in ids where !documents.contains(where: { $0.id == id }) {

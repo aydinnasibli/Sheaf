@@ -5,13 +5,16 @@ import PDFKit
 final class SaveTracker {
     static let shared = SaveTracker()
 
-    private var tasks: [UUID: Task<Void, Never>] = [:]
+    private var tasks: [UUID: (task: Task<Void, Never>, fileName: String)] = [:]
 
     var isSaving: Bool { !tasks.isEmpty }
 
-    func track(_ task: Task<Void, Never>) {
+    /// The files being saved, for the alert when quitting takes too long.
+    var fileNames: [String] { Set(tasks.values.map(\.fileName)).filter { !$0.isEmpty }.sorted() }
+
+    func track(_ task: Task<Void, Never>, fileName: String = "") {
         let id = UUID()
-        tasks[id] = task
+        tasks[id] = (task, fileName)
         Task { [weak self] in
             await task.value
             self?.tasks[id] = nil
@@ -20,12 +23,23 @@ final class SaveTracker {
 
     func waitForAll() async {
         while !tasks.isEmpty {
-            for task in Array(tasks.values) {
+            for (task, _) in Array(tasks.values) {
                 await task.value
             }
             // Let finished tasks remove themselves before checking again.
             await Task.yield()
         }
+    }
+
+    /// Waits for the saves to finish, but no longer than `timeout`. Returns
+    /// whether they all finished.
+    func waitForAll(timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while isSaving {
+            guard ContinuousClock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return true
     }
 }
 
