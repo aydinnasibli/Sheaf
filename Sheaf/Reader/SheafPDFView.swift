@@ -13,8 +13,10 @@ final class SheafPDFView: PDFView {
     var onHighlightKey: ((HighlightKind) -> Bool)?
     /// Asked when the mouse goes down on a page: the highlighter to drag a
     /// box with, or nil to select text as usual. Boxes are for scanned
-    /// pages, which have no text to select, and for Option-dragging.
-    var boxHighlightKind: ((PDFPage, NSEvent.ModifierFlags) -> HighlightKind?)?
+    /// pages, which have no text to select, and for Option-dragging off
+    /// the text (on text, Option-drag selects a block of it, as PDFKit does).
+    /// Also given where the mouse is on the page (in page coordinates).
+    var boxHighlightKind: ((PDFPage, CGPoint, NSEvent.ModifierFlags) -> HighlightKind?)?
     /// A box was dragged out on a page (in page coordinates).
     var onBoxDrawn: ((CGRect, PDFPage, HighlightKind) -> Void)?
     /// The mouse was clicked, not dragged, where a box would start, at this
@@ -120,7 +122,7 @@ final class SheafPDFView: PDFView {
     private func boxStart(for event: NSEvent) -> (PDFPage, HighlightKind)? {
         let point = convert(event.locationInWindow, from: nil)
         guard let page = page(for: point, nearest: false),
-              let kind = boxHighlightKind?(page, event.modifierFlags)
+              let kind = boxHighlightKind?(page, convert(point, to: page), event.modifierFlags)
         else { return nil }
         return (page, kind)
     }
@@ -171,7 +173,7 @@ final class SheafPDFView: PDFView {
         guard let window else { return }
         let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
         guard bounds.contains(point), let page = page(for: point, nearest: false) else { return }
-        let isBox = boxHighlightKind?(page, event.modifierFlags) != nil
+        let isBox = boxHighlightKind?(page, convert(point, to: page), event.modifierFlags) != nil
         if isBox {
             NSCursor.crosshair.set()
         } else if showsBoxCursor {

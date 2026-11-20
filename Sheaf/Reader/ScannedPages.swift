@@ -18,6 +18,10 @@ final class ScannedPages {
 
     /// Called after each page is read.
     @ObservationIgnored var onPageRead: ((RecognizedPage) -> Void)?
+    /// Called once reading is done and the text is saved (also when it
+    /// stopped early because the PDF was closed), so the library's search
+    /// can take the text in.
+    @ObservationIgnored var onFinished: (() -> Void)?
     /// Whether each page of the PDF on screen has selectable text, as found out.
     @ObservationIgnored private var hasText: [Int: Bool] = [:]
     @ObservationIgnored private var task: Task<Void, Never>?
@@ -102,5 +106,6 @@ final class ScannedPages {
 
     private func finish() {
         progress = nil
+        onFinished?()
     }
 }

@@ -5,8 +5,7 @@ import UniformTypeIdentifiers
 /// Adding PDFs by the handful or by the folder: drag and drop onto the
 /// library, and folders chosen in File › Open.
 extension LibraryStore {
-    /// How many PDFs are added between pauses, so a big folder doesn't
-    /// freeze the window.
+    /// How many PDFs are read in the background before they're added.
     private static let batchSize = 8
 
     /// Adds PDFs and folders of PDFs. Folders add every PDF inside them,
@@ -22,13 +21,11 @@ extension LibraryStore {
         var added: [LibraryEntry] = []
         var seen = Set<UUID>()
         for start in stride(from: 0, to: files.count, by: Self.batchSize) {
+            // A few at a time, so they show up in the library as they're
+            // added. The files are read in the background meanwhile.
             let batch = Array(files[start..<min(start + Self.batchSize, files.count)])
-            for entry in add(urls: batch) where seen.insert(entry.id).inserted {
+            for entry in await addInBackground(urls: batch) where seen.insert(entry.id).inserted {
                 added.append(entry)
-            }
-            if start + Self.batchSize < files.count {
-                // Let the window draw and respond before the next few.
-                try? await Task.sleep(for: .milliseconds(10))
             }
         }
         if let collection, !added.isEmpty { move(added, to: collection) }

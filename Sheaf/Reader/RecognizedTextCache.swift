@@ -37,6 +37,12 @@ nonisolated struct RecognizedTextCache: Sendable {
         self.cacheURL = folder.appending(path: name).appendingPathExtension("plist")
     }
 
+    /// When text was last saved here, or nil if none has been. The library's
+    /// text index takes the text in again when this changes.
+    var savedAt: Date? {
+        (try? FileManager.default.attributesOfItem(atPath: cacheURL.path(percentEncoded: false)))?[.modificationDate] as? Date
+    }
+
     /// Text read earlier, for the pages that haven't changed since.
     func load(pageCount: Int, current: [ScannedPageInfo]) -> [RecognizedPage] {
         guard let data = try? Data(contentsOf: cacheURL),

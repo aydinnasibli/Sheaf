@@ -1,8 +1,10 @@
 import AppKit
 import Foundation
+import ImageIO
 import Observation
 import PDFKit
 import SwiftData
+import UniformTypeIdentifiers
 
 /// A deleted collection, kept by Undo: everything needed to bring it back.
 nonisolated struct DeletedCollection: Sendable {
@@ -271,9 +273,11 @@ final class LibraryStore {
 
     /// Records that a PDF was opened: adds it to the library the first time,
     /// and updates "last opened" after that. Call while Sheaf has access to
-    /// the file (it was just opened, dropped or picked).
+    /// the file (it was just opened, dropped or picked). `cover`, if the
+    /// caller drew it already (away from the main thread), saves drawing it
+    /// here for a PDF without one.
     @discardableResult
-    func recordOpen(of url: URL, document: PDFDocument, now: Date = .now) -> LibraryEntry {
+    func recordOpen(of url: URL, document: PDFDocument, cover: Data? = nil, now: Date = .now) -> LibraryEntry {
         let item = existingItem(for: url) ?? addItem(for: url, document: document, now: now)
         item.lastOpenedAt = now
         item.lastKnownPath = Self.path(of: url)
@@ -282,32 +286,79 @@ final class LibraryStore {
             item.bookmark = Self.makeBookmark(for: url)
         }
         if item.cover == nil {
-            item.cover = Self.coverImage(for: document)
+            item.cover = cover ?? Self.coverImage(for: document)
         }
         save()
         return item
     }
 
+    /// What adding a PDF needs from its file.
+    nonisolated struct NewFile: Sendable {
+        let url: URL
+        let pageCount: Int
+        /// A small picture of the first page, as PNG.
+        let cover: Data?
+        let bookmark: Data?
+    }
+
     /// Adds PDFs without opening them, for drag and drop and the Add command.
-    /// Returns the items, new or existing, in the same order.
+    /// Returns the items, new or existing, in the same order; files that
+    /// aren't PDFs are left out.
+    ///
+    /// PDFs already in the library (also ones moved or renamed since) are
+    /// found here; only new ones are read, and their covers drawn, away from
+    /// the main thread, so adding a big PDF or a slow drive's never freezes
+    /// the window. The entries are made here once that's done.
     @discardableResult
-    func add(urls: [URL], now: Date = .now) -> [LibraryEntry] {
-        var items: [LibraryEntry] = []
-        for url in urls {
-            if let existing = existingItem(for: url) {
-                items.append(existing)
-                continue
-            }
-            let didAccess = url.startAccessingSecurityScopedResource()
-            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-            guard let document = PDFDocument(url: url) else { continue }
-            let item = addItem(for: url, document: document, now: now)
-            item.bookmark = Self.makeBookmark(for: url)
-            item.cover = Self.coverImage(for: document)
-            items.append(item)
+    func addInBackground(urls: [URL], cloud: any CloudFiles = ICloudDrive(), now: Date = .now) async -> [LibraryEntry] {
+        var paths = Set<String>()
+        let toRead = urls.filter { existingItem(for: $0) == nil && paths.insert(Self.path(of: $0)).inserted }
+        let read = toRead.isEmpty ? [] : await Task.detached(priority: .userInitiated) {
+            toRead.compactMap { LibraryStore.readNewFile(at: $0, cloud: cloud) }
+        }.value
+        let byPath = Dictionary(read.map { (Self.path(of: $0.url), $0) }, uniquingKeysWith: { first, _ in first })
+        // Looked for again: the same file may have been added meanwhile.
+        let items = urls.compactMap { url in
+            existingItem(for: url) ?? byPath[Self.path(of: url)].map { insert($0, now: now) }
         }
         save()
         return items
+    }
+
+    /// Like `addInBackground(urls:)`, but reads the files here, on the main
+    /// thread. For tests, and the odd small file.
+    @discardableResult
+    func add(urls: [URL], now: Date = .now) -> [LibraryEntry] {
+        let items = urls.compactMap { url in
+            existingItem(for: url) ?? Self.readNewFile(at: url).map { insert($0, now: now) }
+        }
+        save()
+        return items
+    }
+
+    /// Opens a PDF to add it: its page count, a picture of its first page
+    /// and a bookmark to find it again. Nil if it isn't a PDF that opens.
+    /// Runs on any thread; the PDF is only used here.
+    ///
+    /// A PDF in iCloud Drive that isn't on this Mac isn't opened, as that
+    /// would download it (a whole folder of them, when a folder is added):
+    /// it's added without a page count or cover, which opening it fills in.
+    nonisolated static func readNewFile(at url: URL, cloud: any CloudFiles = ICloudDrive()) -> NewFile? {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        guard cloud.status(of: url).isLocal else {
+            return isPDF(url) ? NewFile(url: url, pageCount: 0, cover: nil, bookmark: makeBookmark(for: url)) : nil
+        }
+        guard let document = PDFDocument(url: url) else { return nil }
+        return NewFile(url: url, pageCount: document.pageCount, cover: coverImage(for: document), bookmark: makeBookmark(for: url))
+    }
+
+    private func insert(_ file: NewFile, now: Date) -> LibraryEntry {
+        let item = LibraryEntry(title: Self.title(for: file.url), path: Self.path(of: file.url), pageCount: file.pageCount, now: now)
+        context.insert(item)
+        item.bookmark = file.bookmark
+        item.cover = file.cover
+        return item
     }
 
     /// Keeps access to a file the user picked, for the rest of the session.
@@ -464,22 +515,29 @@ final class LibraryStore {
 
     /// The file name without ".pdf". PDF title metadata is often missing or
     /// junk ("Microsoft Word - draft3.docx"), so the file name is more reliable.
-    static func title(for url: URL) -> String {
+    nonisolated static func title(for url: URL) -> String {
         url.deletingPathExtension().lastPathComponent
     }
 
-    static func path(of url: URL) -> String {
+    nonisolated static func path(of url: URL) -> String {
         url.standardizedFileURL.path(percentEncoded: false)
     }
 
-    private static func makeBookmark(for url: URL) -> Data? {
+    private nonisolated static func makeBookmark(for url: URL) -> Data? {
         try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
-    static func coverImage(for document: PDFDocument) -> Data? {
-        guard let page = document.page(at: 0) else { return nil }
-        let image = page.thumbnail(of: CGSize(width: 96, height: 124), for: .cropBox)
-        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-        return bitmap.representation(using: .png, properties: [:])
+    /// A small picture of the first page, as PNG. Drawn with Core Graphics,
+    /// so it works on any thread (with a PDF only that thread uses).
+    nonisolated static func coverImage(for document: PDFDocument) -> Data? {
+        guard let page = document.page(at: 0),
+              let image = PageImage.thumbnail(of: page, fitting: CGSize(width: 96, height: 124), highlights: [])
+        else { return nil }
+        let png = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(png as CFMutableData, UTType.png.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        return CGImageDestinationFinalize(destination) ? png as Data : nil
     }
 }

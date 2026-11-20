@@ -4,13 +4,16 @@ import PDFKit
 /// book or journal does: "xii" in a preface, "245" in a journal article
 /// that starts on page 233. Sheaf shows and cites those, and falls back to
 /// counting pages (1, 2, 3…) when a PDF has none.
-enum PageLabels {
+nonisolated enum PageLabels {
     /// The PDF's labels, one per page, or none when they're just 1, 2, 3…
     /// (PDFKit reports a page's number as its label when there are none.)
     static func read(from document: PDFDocument) -> [String] {
-        let labels = (0..<document.pageCount).map { index in
-            document.page(at: index)?.label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        }
+        cleaned((0..<document.pageCount).map { document.page(at: $0)?.label })
+    }
+
+    /// The labels to keep, from each page's label as PDFKit reports it.
+    static func cleaned(_ reported: [String?]) -> [String] {
+        let labels = reported.map { $0?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         let isPlain = labels.enumerated().allSatisfy { index, label in label.isEmpty || label == String(index + 1) }
         guard !isPlain else { return [] }
         // A page without a label of its own shows its number.

@@ -14,9 +14,16 @@ protocol HighlightIndexing: AnyObject {
     func remove(pdfIDs: [UUID])
     /// Starts over with exactly these highlights.
     func replaceAll(with highlights: [SpotlightHighlight])
+    /// Adds page notes and summaries, or updates ones already indexed.
+    func index(notes: [SpotlightNote])
+    /// Removes page notes and summaries (see `SpotlightNote.identifier`).
+    func remove(noteIdentifiers: [String])
 }
 
 extension HighlightIndexing {
+    func index(notes: [SpotlightNote]) {}
+    func remove(noteIdentifiers: [String]) {}
+
     /// Adds a highlight that was just made or changed.
     func index(_ record: HighlightRecord) {
         if let highlight = SpotlightHighlight(record) { index([highlight]) }
@@ -93,18 +100,40 @@ extension SpotlightHighlight {
 /// highlight deleted right after it was added doesn't come back.
 final class SpotlightIndex: HighlightIndexing {
     private var queue: Task<Void, Never>?
+    /// Follows page notes and summaries.
+    private var notesWatcher: SpotlightNotesWatcher?
 
-    /// Indexes the library's highlights once, a few seconds after launch,
-    /// and from then on follows every change. Starting over each launch also
-    /// catches anything changed while Sheaf wasn't keeping the index, such
-    /// as a PDF renamed or highlights made by an older version.
+    /// Indexes the library's highlights, page notes and summaries once, a
+    /// few seconds after launch, and from then on follows every change.
+    /// Starting over each launch also catches anything changed while Sheaf
+    /// wasn't keeping the index, such as a PDF renamed or highlights made by
+    /// an older version.
     static func start(for library: LibraryStore) {
         guard CSSearchableIndex.isIndexingAvailable() else { return }
         let index = SpotlightIndex()
         library.searchIndex = index
+        let watcher = SpotlightNotesWatcher(context: library.context, index: index)
+        index.notesWatcher = watcher
+        // From now on, so nothing changed meanwhile is missed.
+        watcher.startWatching()
         Task {
             try? await Task.sleep(for: .seconds(3))
             index.replaceAll(with: library.spotlightHighlights())
+            index.index(notes: watcher.allNotes())
+        }
+    }
+
+    func index(notes: [SpotlightNote]) {
+        guard !notes.isEmpty else { return }
+        enqueue {
+            try await CSSearchableIndex.default().indexSearchableItems(notes.map { $0.searchableItem() })
+        }
+    }
+
+    func remove(noteIdentifiers: [String]) {
+        guard !noteIdentifiers.isEmpty else { return }
+        enqueue {
+            try await CSSearchableIndex.default().deleteSearchableItems(withIdentifiers: noteIdentifiers)
         }
     }
 
@@ -166,9 +195,16 @@ extension LibraryStore {
         let descriptor = FetchDescriptor<HighlightRecord>(predicate: #Predicate { $0.id == id })
         return try? context.fetch(descriptor).first
     }
+
+    /// The page note a Spotlight result stands for.
+    fileprivate func spotlightPageNote(id: UUID) -> PageNote? {
+        let descriptor = FetchDescriptor<PageNote>(predicate: #Predicate { $0.id == id })
+        return try? context.fetch(descriptor).first
+    }
 }
 
-/// Opens a Spotlight result: the PDF, scrolled to the highlight.
+/// Opens a Spotlight result: the PDF, scrolled to the highlight or at the
+/// note's page; a summary opens its PDF.
 enum SpotlightResult {
     /// The activity handled last. One result can arrive twice, through the
     /// app delegate and through SwiftUI, and should only open once.
@@ -179,19 +215,35 @@ enum SpotlightResult {
     static func open(_ activity: NSUserActivity) -> Bool {
         guard activity.activityType == CSSearchableItemActionType,
               let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
-              let id = UUID(uuidString: identifier)
+              let target = SpotlightNote.Target(identifier: identifier)
         else { return false }
         guard activity !== lastActivity else { return true }
         lastActivity = activity
 
         let router = WindowRouter.shared
-        if let record = router.library?.spotlightRecord(id: id), let entry = record.entry {
-            router.open(entry, at: record)
-        } else {
-            // Deleted since Spotlight last heard about it.
-            router.library?.searchIndex?.remove(highlightIDs: [id])
-            router.showLibrary()
+        let library = router.library
+        switch target {
+        case .highlight(let id):
+            if let record = library?.spotlightRecord(id: id), let entry = record.entry {
+                router.open(entry, at: record)
+                return true
+            }
+            library?.searchIndex?.remove(highlightIDs: [id])
+        case .pageNote(let id):
+            if let note = library?.spotlightPageNote(id: id), let entry = note.entry {
+                router.open(entry, atPage: note.pageIndex)
+                return true
+            }
+            library?.searchIndex?.remove(noteIdentifiers: [identifier])
+        case .summary(let pdfID):
+            if let entry = library?.entry(id: pdfID) {
+                router.open(entry)
+                return true
+            }
+            library?.searchIndex?.remove(noteIdentifiers: [identifier])
         }
+        // Deleted since Spotlight last heard about it.
+        router.showLibrary()
         return true
     }
 }

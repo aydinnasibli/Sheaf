@@ -74,21 +74,25 @@ final class WindowRouter {
         pendingURLs.removeAll()
         for url in urls { library.keepAccess(to: url) }
         let folders = urls.filter(LibraryStore.isFolder)
-        let opened = library.add(urls: urls.filter { !folders.contains($0) })
-        // Each comes to the front in its window.
-        for entry in opened {
-            workspace.open(entry)
-        }
-        TextIndexer.shared.index(opened)
-        if !folders.isEmpty {
-            // A folder can hold dozens of PDFs: add them all, open none, and
-            // show the whole library, where the new ones are at the top.
-            Task { _ = await library.addFiles(folders) }
-            if opened.isEmpty {
-                workspace.libraryScope = .all
-                workspace.showLibrary()
+        let files = urls.filter { !folders.contains($0) }
+        Task {
+            // New PDFs are read, and their covers drawn, in the background.
+            let opened = await library.addInBackground(urls: files)
+            // Each comes to the front in its window.
+            for entry in opened {
+                workspace.open(entry)
             }
+            TextIndexer.shared.index(opened)
+            if !folders.isEmpty {
+                // A folder can hold dozens of PDFs: add them all, open none, and
+                // show the whole library, where the new ones are at the top.
+                Task { _ = await library.addFiles(folders) }
+                if opened.isEmpty {
+                    workspace.libraryScope = .all
+                    workspace.showLibrary()
+                }
+            }
+            if opened.isEmpty { show(.main) }
         }
-        if opened.isEmpty { show(.main) }
     }
 }

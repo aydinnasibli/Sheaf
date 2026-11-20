@@ -243,7 +243,7 @@ final class ReaderModel {
 
     init(
         document: PDFDocument, entry: LibraryEntry?, store: LibraryStore?, fileURL: URL?,
-        preferences: UserDefaults = .standard
+        preferences: UserDefaults = .standard, scan: OpeningScan? = nil
     ) {
         self.document = document
         self.entry = entry
@@ -254,7 +254,8 @@ final class ReaderModel {
         self.outlineRows = OutlineRow.flatten(outline, in: document)
         // Saving highlights into a PDF loses its page labels, so the library
         // remembers them from when the file still had them.
-        let ownLabels = PageLabels.read(from: document)
+        // Found in the background as the PDF was read, when it was (`scan`).
+        let ownLabels = scan?.labels ?? PageLabels.read(from: document)
         let remembered = entry?.pageLabels ?? []
         self.pageLabels = ownLabels.isEmpty && remembered.count == document.pageCount ? remembered : ownLabels
         if let saved = preferences.string(forKey: Self.layoutKey), let layout = PageLayout(rawValue: saved) {
@@ -298,8 +299,11 @@ final class ReaderModel {
         if entry?.needsFileSave == true {
             PDFHighlights.match(document, to: highlights)
         }
-        // Changes that didn't reach the file last time are saved now.
-        if PDFHighlights.bringUpToDate(document, with: highlights, removedIDs: entry?.removedHighlightIDs ?? [])
+        // Changes that didn't reach the file last time are saved now. When
+        // the scan shows there are none, the pages aren't gone through again.
+        let removedIDs = entry?.removedHighlightIDs ?? []
+        let isUpToDate = scan?.isUpToDate(with: Set(highlights.map(\.id)), removedIDs: removedIDs) == true
+        if (!isUpToDate && PDFHighlights.bringUpToDate(document, with: highlights, removedIDs: removedIDs))
             || entry?.needsFileSave == true {
             scheduleSave()
         }
@@ -763,8 +767,7 @@ final class ReaderModel {
             let words = await TextRecognizer.lines(in: image).map(\.text).joined(separator: " ")
             // Closed meanwhile: the highlight keeps "Image area".
             guard !Task.isCancelled, !words.isEmpty, let record = highlight(id: id) else { return }
-            record.text = words
-            store.save()
+            store.setRecognizedText(words, for: record)
             refreshHighlights()
         }
         boxReadings[id] = reading
@@ -776,6 +779,8 @@ final class ReaderModel {
         scannedPages.cancel()
         for reading in boxReadings.values { reading.cancel() }
         boxReadings = [:]
+        // Its copy of the file is deleted.
+        if let backgroundCopy { Task { await backgroundCopy.close() } }
     }
 
     /// Shows a note over the page for a few seconds.

@@ -55,17 +55,25 @@ struct ScannedPageTests {
         let scanned = try #require(model.document.page(at: 0))
         let typed = try #require(model.document.page(at: 1))
 
+        // Off the line of text on the typed page, and on the scanned page's picture of one.
+        let blank = CGPoint(x: 300, y: 300)
+        let onText = CGPoint(x: 90, y: 704)
+
         // Nothing picked: text pages select text, and so do scanned ones.
-        #expect(model.boxHighlightKind(on: scanned, modifiers: []) == nil)
-        // Option-drag boxes on any page; a key idea if no highlighter is picked.
-        #expect(model.boxHighlightKind(on: typed, modifiers: .option) == .keyIdea)
+        #expect(model.boxHighlightKind(on: scanned, at: onText, modifiers: []) == nil)
+        // Option-drag boxes on scanned pages and off the text; a key idea if no highlighter is picked.
+        #expect(model.boxHighlightKind(on: typed, at: blank, modifiers: .option) == .keyIdea)
+        #expect(model.boxHighlightKind(on: scanned, at: onText, modifiers: .option) == .keyIdea)
+        // On text, Option-drag is PDFKit's: it selects a block of text, as in Preview.
+        #expect(model.boxHighlightKind(on: typed, at: onText, modifiers: .option) == nil)
 
         model.choosePen(.question)
         #expect(model.activePen == .question)
         #expect(model.pageNotice == ReaderModel.scannedPageNotice)
-        #expect(model.boxHighlightKind(on: scanned, modifiers: []) == .question)
-        #expect(model.boxHighlightKind(on: typed, modifiers: []) == nil)
-        #expect(model.boxHighlightKind(on: typed, modifiers: .option) == .question)
+        #expect(model.boxHighlightKind(on: scanned, at: onText, modifiers: []) == .question)
+        #expect(model.boxHighlightKind(on: typed, at: blank, modifiers: []) == nil)
+        #expect(model.boxHighlightKind(on: typed, at: blank, modifiers: .option) == .question)
+        #expect(model.boxHighlightKind(on: typed, at: onText, modifiers: .option) == nil)
 
         model.dismissPageNotice()
         #expect(model.pageNotice == nil)
@@ -102,6 +110,27 @@ struct ScannedPageTests {
         undo.redo()
         #expect(model.highlights.map(\.id) == [record.id])
         #expect(model.highlights.first?.text.localizedCaseInsensitiveContains("mitochondria") == true)
+    }
+
+    @Test func wordsFoundInABoxReachSpotlight() async throws {
+        let spotlight = FakeHighlightIndex()
+        store.searchIndex = spotlight
+        let (model, _) = try makeReader([.scanned("Mitochondria produce energy")])
+
+        let reading = model.highlightBox(TestPDF.scannedLineRect, onPage: 0, as: .definition)
+        let record = try #require(model.highlights.first)
+        #expect(spotlight.changes == [.indexed([try #require(SpotlightHighlight(record))])])
+        await reading?.value
+
+        // Spotlight first heard of an image area; now it has the words.
+        guard case .indexed(let latest) = try #require(spotlight.changes.last), let indexed = latest.first else {
+            Issue.record("The words read off the box should be indexed")
+            return
+        }
+        #expect(spotlight.changes.count == 2)
+        #expect(indexed.id == record.id)
+        #expect(indexed.text.localizedCaseInsensitiveContains("mitochondria"))
+        #expect(indexed.text != ReaderModel.imageAreaText)
     }
 
     @Test func aBoxWithNoWordsIsAnImageArea() async throws {

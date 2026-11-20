@@ -18,7 +18,10 @@ struct ReaderScreen: View {
             case .loading:
                 DelayedProgressView()
             case .downloading:
-                DownloadingView()
+                // In its own window, cancelling closes the window.
+                DownloadingView(download: document.download, cancelTitle: readerWindow.isMain ? "Cancel" : "Close Window") {
+                    workspace.close(document.id)
+                }
             case .locked:
                 UnlockView { document.unlock(with: $0) }
             case .ready(let model):

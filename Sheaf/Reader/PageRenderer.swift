@@ -1,11 +1,17 @@
 import AppKit
 import PDFKit
+import Synchronization
 
 /// A second copy of an open PDF, for drawing thumbnails and reading scanned
 /// pages away from the main thread. PDFKit can't be used on one document
 /// from two threads at once, so this copy lives inside an actor and nothing
-/// else touches it. It's read into memory once, so saving highlights into
-/// the file can't disturb it.
+/// else touches it.
+///
+/// The file is copied once into Sheaf's temporary folder (on the same
+/// drive that's a clone, which takes no time or space) and the copy is
+/// read from there as pages are needed, so a big scanned PDF isn't held in
+/// memory a second time. Nothing else writes the copy, so saving highlights
+/// into the PDF can't disturb it. It's deleted when the PDF closes.
 actor PageRenderer {
     enum Source: Sendable {
         case file(URL)
@@ -22,6 +28,8 @@ actor PageRenderer {
 
     private let source: Source
     private let expectedPageCount: Int
+    /// Where the copy of a file goes.
+    private let copyURL: URL
     private var document: PDFDocument?
     private var hasLoaded = false
     /// Pages whose Sheaf highlights were taken out of the copy (they're
@@ -30,9 +38,32 @@ actor PageRenderer {
     /// How many thumbnails have been drawn, so tests can check the cache.
     private(set) var thumbnailsDrawn = 0
 
-    init(source: Source, expectedPageCount: Int) {
+    /// Copies of files go in `copiesFolder`.
+    init(source: Source, expectedPageCount: Int, copiesFolder: URL = PageRenderer.copiesFolder) {
         self.source = source
         self.expectedPageCount = expectedPageCount
+        self.copyURL = copiesFolder.appending(path: "\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString).pdf")
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: copyURL)
+    }
+
+    /// In the temporary folder inside Sheaf's container.
+    nonisolated static var copiesFolder: URL {
+        FileManager.default.temporaryDirectory.appending(path: "Page Copies", directoryHint: .isDirectory)
+    }
+
+    /// Lets go of the copy: the PDF was closed. Nothing is drawn after this.
+    func close() {
+        document = nil
+        hasLoaded = true
+        try? FileManager.default.removeItem(at: copyURL)
+    }
+
+    /// Whether the copy is read from a file of its own (rather than memory).
+    var isFileBacked: Bool {
+        loadedDocument() != nil && FileManager.default.fileExists(atPath: copyURL.path(percentEncoded: false))
     }
 
     /// Whether the copy could be read.
@@ -74,16 +105,48 @@ actor PageRenderer {
     private func loadedDocument() -> PDFDocument? {
         if hasLoaded { return document }
         hasLoaded = true
-        let data: Data?
+        let copy: PDFDocument?
         switch source {
-        case .file(let url): data = try? Data(contentsOf: url)
-        case .data(let bytes): data = bytes
+        case .file(let url):
+            // In memory as before, if the file can't be copied (the disk is full, say).
+            copy = copyFile(url).flatMap(PDFDocument.init(url:)) ?? (try? Data(contentsOf: url)).flatMap(PDFDocument.init(data:))
+        case .data(let bytes):
+            copy = PDFDocument(data: bytes)
         }
         // A copy with a password can't be unlocked here (Sheaf doesn't keep
         // the password), and one with different pages isn't the same PDF.
-        guard let data, let copy = PDFDocument(data: data), !copy.isLocked, copy.pageCount == expectedPageCount else { return nil }
+        guard let copy, !copy.isLocked, copy.pageCount == expectedPageCount else {
+            try? FileManager.default.removeItem(at: copyURL)
+            return nil
+        }
         document = copy
         return copy
+    }
+
+    /// Copies the file into `copyURL`, coordinated so it's never caught
+    /// halfway through a save. Returns the copy, or nil if it failed.
+    private func copyFile(_ url: URL) -> URL? {
+        let folder = copyURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        Self.removeLeftoverCopies(in: folder)
+        var copied = false
+        var coordinationError: NSError?
+        NSFileCoordinator(filePresenter: nil).coordinate(readingItemAt: url, options: [.withoutChanges], error: &coordinationError) { target in
+            copied = (try? FileManager.default.copyItem(at: target, to: copyURL)) != nil
+        }
+        return copied ? copyURL : nil
+    }
+
+    /// Copies a Sheaf that quit unexpectedly left behind: from another run,
+    /// and a day old. (Checked once per run.)
+    private static func removeLeftoverCopies(in folder: URL) {
+        guard !LeftoverCopies.checked.withLock({ checked in defer { checked = true }; return checked }) else { return }
+        let ownPrefix = "\(ProcessInfo.processInfo.processIdentifier)-"
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        for file in files where !file.lastPathComponent.hasPrefix(ownPrefix) {
+            let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if date < .now.addingTimeInterval(-86_400) { try? FileManager.default.removeItem(at: file) }
+        }
     }
 
     private func cleanedPage(_ index: Int, in document: PDFDocument) -> PDFPage? {
@@ -97,8 +160,12 @@ actor PageRenderer {
     }
 }
 
+private nonisolated enum LeftoverCopies {
+    static let checked = Mutex(false)
+}
+
 /// A scanned page found in the background, and its fingerprint.
-nonisolated struct ScannedPageInfo: Sendable, Equatable {
+nonisolated struct ScannedPageInfo: Sendable, Equatable, Codable {
     let index: Int
     let fingerprint: String
 }

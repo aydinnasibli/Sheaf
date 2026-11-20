@@ -16,8 +16,20 @@ final class OpenDocument: Identifiable {
         case failed(title: String, message: String)
     }
 
+    /// A download from iCloud Drive that's under way.
+    struct Download: Equatable {
+        let startedAt: Date
+        /// Whether iCloud is sending the file. It isn't while the Mac is
+        /// offline, or before iCloud gets to it.
+        var isTransferring = false
+        /// What iCloud said went wrong, if it did. Sheaf keeps asking.
+        var problem: String?
+    }
+
     let id: UUID
     private(set) var phase = Phase.loading
+    /// Set while `phase` is `.downloading`.
+    private(set) var download: Download?
     /// A highlight to scroll to once the reader is on screen.
     var pendingHighlightID: UUID?
     /// A page (0-based) to go to once the reader is on screen.
@@ -25,6 +37,9 @@ final class OpenDocument: Identifiable {
 
     @ObservationIgnored let entry: LibraryEntry
     @ObservationIgnored private let library: LibraryStore
+    @ObservationIgnored private let cloud: any CloudFiles
+    /// How often to ask iCloud whether the file has arrived.
+    @ObservationIgnored private let downloadCheckInterval: Duration
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var isClosed = false
     /// The title when the PDF was opened, for after it's removed from the library.
@@ -32,11 +47,16 @@ final class OpenDocument: Identifiable {
 
     /// Doesn't load the file yet: `loadIfNeeded()` does, the first time the
     /// PDF is shown, so reopening many PDFs at launch stays quick.
-    init(entry: LibraryEntry, library: LibraryStore) {
+    init(
+        entry: LibraryEntry, library: LibraryStore, cloud: any CloudFiles = ICloudDrive(),
+        downloadCheckInterval: Duration = .seconds(1)
+    ) {
         self.id = entry.id
         self.openedTitle = entry.title
         self.entry = entry
         self.library = library
+        self.cloud = cloud
+        self.downloadCheckInterval = downloadCheckInterval
     }
 
     /// The PDF's title in the library. Read from the entry each time, so
@@ -86,9 +106,10 @@ final class OpenDocument: Identifiable {
             )
             return
         }
+        let didDownload = cloud.status(of: url) != .local
         guard await downloadIfNeeded(url) else { return }
 
-        let loaded = await Self.read(url, excluding: library.knownHighlightIDs(of: entry))
+        let loaded = await Self.read(url, excluding: library.knownHighlightIDs(of: entry), drawingCover: entry.cover == nil)
         guard !isClosed else { return }
         guard let loaded else {
             phase = .failed(
@@ -98,31 +119,41 @@ final class OpenDocument: Identifiable {
             return
         }
         let document = loaded.document
-        phase = document.isLocked ? .locked(document, url) : .ready(makeModel(document: document, url: url, found: loaded.found))
+        phase = document.isLocked
+            ? .locked(document, url)
+            : .ready(makeModel(document: document, url: url, found: loaded.found, scan: loaded.scan, cover: loaded.cover))
+        // Now that it's on this Mac, the library's search can read it too.
+        if didDownload { TextIndexer.shared.index([entry]) }
     }
 
-    private func makeModel(document: PDFDocument, url: URL, found: [PDFHighlightImport.Found]) -> ReaderModel {
-        library.recordOpen(of: url, document: document)
+    private func makeModel(
+        document: PDFDocument, url: URL, found: [PDFHighlightImport.Found], scan: OpeningScan? = nil, cover: Data? = nil
+    ) -> ReaderModel {
+        library.recordOpen(of: url, document: document, cover: cover)
         // Highlights saved in the file that the library doesn't have (it was
         // removed from the library and opened again, say) join the library.
         library.importHighlights(found, into: entry)
-        return ReaderModel(document: document, entry: entry, store: library, fileURL: url)
+        return ReaderModel(document: document, entry: entry, store: library, fileURL: url, scan: scan)
     }
 
     // MARK: Reading the file
 
-    /// The PDF, and the Sheaf highlights in it the library doesn't know.
+    /// The PDF, the Sheaf highlights in it the library doesn't know, what
+    /// the reader needs from its pages, and its cover if one was wanted.
     private nonisolated struct Loaded: @unchecked Sendable {
         // Made on a background thread, then only used on the main thread.
         let document: PDFDocument
         let found: [PDFHighlightImport.Found]
+        let scan: OpeningScan?
+        let cover: Data?
     }
 
     /// Reads and parses the file away from the main thread, so a big PDF or
     /// a slow drive doesn't freeze the window. The whole file is read into
     /// memory, so saving highlights into it later can't disturb the copy on
-    /// screen.
-    private nonisolated static func read(_ url: URL, excluding known: Set<UUID>) async -> Loaded? {
+    /// screen. The pages are gone through here, once, for what the reader
+    /// needs from them, so the main thread doesn't have to.
+    private nonisolated static func read(_ url: URL, excluding known: Set<UUID>, drawingCover: Bool) async -> Loaded? {
         await Task.detached(priority: .userInitiated) {
             var data: Data?
             var coordinationError: NSError?
@@ -135,44 +166,48 @@ final class OpenDocument: Identifiable {
                 data = try? Data(contentsOf: url)
             }
             guard let data, let document = PDFDocument(data: data) else { return nil }
-            let found = document.isLocked ? [] : PDFHighlightImport.highlights(in: document, excluding: known)
-            return Loaded(document: document, found: found)
+            guard !document.isLocked else { return Loaded(document: document, found: [], scan: nil, cover: nil) }
+            let scan = OpeningScan(document)
+            // Read back only when the file has highlights the library doesn't know.
+            let found = scan.highlightIDs.isSubset(of: known) ? [] : PDFHighlightImport.highlights(in: document, excluding: known)
+            let cover = drawingCover ? LibraryStore.coverImage(for: document) : nil
+            return Loaded(document: document, found: found, scan: scan, cover: cover)
         }.value
     }
 
     // MARK: iCloud Drive
 
     /// For a file in iCloud Drive that isn't on this Mac yet: starts the
-    /// download and waits for it, showing "Downloading from iCloud…".
-    /// Returns false if the download failed or the PDF was closed.
+    /// download and waits for it, showing "Downloading from iCloud…", for
+    /// as long as it takes: a big PDF on a slow connection is still on its
+    /// way. If iCloud reports a problem, it's shown, and Sheaf keeps asking.
+    /// Cancel closes the PDF. Returns false if the PDF was closed.
     private func downloadIfNeeded(_ url: URL) async -> Bool {
-        guard Self.cloudStatus(of: url).needsDownload else { return true }
+        guard cloud.status(of: url) != .local else { return true }
         phase = .downloading
-        try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+        download = Download(startedAt: .now)
+        defer { download = nil }
+        cloud.startDownloading(url)
+        var lastAsked = ContinuousClock.now
         while true {
-            let status = Self.cloudStatus(of: url)
-            if !status.needsDownload { break }
-            if let error = status.error {
-                phase = .failed(
-                    title: "Can\u{2019}t Download \u{201C}\(entry.title)\u{201D}",
-                    message: "It\u{2019}s in iCloud Drive and couldn\u{2019}t be downloaded to this Mac. \(error.localizedDescription)"
-                )
-                return false
+            switch cloud.status(of: url) {
+            case .local:
+                phase = .loading
+                return true
+            case .notDownloaded(let isDownloading):
+                download?.isTransferring = isDownloading
+                download?.problem = nil
+            case .failed(let problem):
+                download?.isTransferring = false
+                download?.problem = problem
+                // Asked again now and then: the problem may have passed (the Mac is back online).
+                if ContinuousClock.now - lastAsked > .seconds(30) {
+                    cloud.startDownloading(url)
+                    lastAsked = .now
+                }
             }
-            do { try await Task.sleep(for: .seconds(1)) } catch { return false }
+            do { try await Task.sleep(for: downloadCheckInterval) } catch { return false }
+            guard !isClosed else { return false }
         }
-        phase = .loading
-        return true
-    }
-
-    private nonisolated static func cloudStatus(of url: URL) -> (needsDownload: Bool, error: Error?) {
-        var url = url
-        // Resource values are cached per URL; the status changes as it downloads.
-        url.removeAllCachedResourceValues()
-        let values = try? url.resourceValues(forKeys: [
-            .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey, .ubiquitousItemDownloadingErrorKey,
-        ])
-        guard values?.isUbiquitousItem == true else { return (false, nil) }
-        return (values?.ubiquitousItemDownloadingStatus == .notDownloaded, values?.ubiquitousItemDownloadingError)
     }
 }

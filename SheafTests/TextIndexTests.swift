@@ -62,11 +62,11 @@ struct TextIndexTests {
         let index = TextIndex(directory: indexFolder)
         let source = TextIndexer.Source(id: entry.id, bookmark: entry.bookmark, path: entry.lastKnownPath)
 
-        #expect(await TextIndexer.update(source, in: index))
+        #expect(await TextIndexer.update(source, in: index) == .read)
         let stamp = try #require(TextIndex.Stamp(of: url))
         #expect(await index.isCurrent(entry.id, stamp: stamp))
         // Unchanged, the PDF isn't read again.
-        #expect(!(await TextIndexer.update(source, in: index)))
+        #expect(await TextIndexer.update(source, in: index) == .unchanged)
 
         // The PDF is replaced by a new version.
         #expect(TestPDF.make(pages: ["One", "Two", "New words instead"]).write(to: url))
@@ -75,7 +75,7 @@ struct TextIndexTests {
         #expect(changed != stamp)
         #expect(!(await index.isCurrent(entry.id, stamp: changed)))
 
-        #expect(await TextIndexer.update(source, in: index))
+        #expect(await TextIndexer.update(source, in: index) == .read)
         #expect(await index.search("new words", in: [entry.id]).first?.pages.first?.index == 2)
         #expect(await index.search("old words", in: [entry.id]).isEmpty)
     }

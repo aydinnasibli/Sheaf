@@ -115,7 +115,7 @@ private struct TextMatchRow: View {
                     .padding(.bottom, 2)
                 ForEach(match.pages) { page in
                     Button { onOpen(entry, page.index) } label: {
-                        Text(line(for: page))
+                        Text(TextMatchesSection.line(for: page, in: entry, query: query))
                             .font(.system(size: 12.5))
                             .foregroundStyle(Theme.inkSecondary)
                             .lineLimit(2)
@@ -126,8 +126,8 @@ private struct TextMatchRow: View {
                     }
                     .buttonStyle(.sheaf(cornerRadius: 6))
                     .padding(.horizontal, -8)
-                    .help("Open \u{201C}\(entry.title)\u{201D} at page \(page.index + 1)")
-                    .accessibilityLabel("Page \(page.index + 1): \(page.snippet)")
+                    .help("Open \u{201C}\(entry.title)\u{201D} at page \(TextMatchesSection.pageLabel(of: page, in: entry))")
+                    .accessibilityLabel("Page \(TextMatchesSection.pageLabel(of: page, in: entry)): \(page.snippet)")
                     .accessibilityHint("Opens \(entry.title) at this page")
                 }
                 if match.pageCount > match.pages.count {
@@ -145,10 +145,19 @@ private struct TextMatchRow: View {
             Rectangle().fill(Theme.rowDivider).frame(height: 1)
         }
     }
+}
+
+extension TextMatchesSection {
+    /// The page as printed in the PDF ("xii", "245"), else its number. The
+    /// index has the labels of PDFs never opened; the library remembers
+    /// them for PDFs whose labels were lost when highlights were saved.
+    static func pageLabel(of page: TextIndex.Match.Page, in entry: LibraryEntry) -> String {
+        page.label ?? entry.label(ofPage: page.index)
+    }
 
     /// "p. 12 · …snippet…", with the searched words in bold.
-    private func line(for page: TextIndex.Match.Page) -> AttributedString {
-        var number = AttributedString("p. \(page.index + 1)")
+    static func line(for page: TextIndex.Match.Page, in entry: LibraryEntry, query: String) -> AttributedString {
+        var number = AttributedString("p. \(pageLabel(of: page, in: entry))")
         number.font = .system(size: 12.5, weight: .semibold).monospacedDigit()
         number.foregroundColor = Theme.ink
         var dot = AttributedString(" \u{00B7} ")

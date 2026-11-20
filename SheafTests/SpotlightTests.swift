@@ -14,6 +14,8 @@ final class FakeHighlightIndex: HighlightIndexing {
         case removedHighlights([UUID])
         case removedPDFs([UUID])
         case replacedAll([SpotlightHighlight])
+        case indexedNotes([SpotlightNote])
+        case removedNotes([String])
     }
 
     private(set) var changes: [Change] = []
@@ -22,6 +24,8 @@ final class FakeHighlightIndex: HighlightIndexing {
     func remove(highlightIDs: [UUID]) { changes.append(.removedHighlights(highlightIDs)) }
     func remove(pdfIDs: [UUID]) { changes.append(.removedPDFs(pdfIDs)) }
     func replaceAll(with highlights: [SpotlightHighlight]) { changes.append(.replacedAll(highlights)) }
+    func index(notes: [SpotlightNote]) { changes.append(.indexedNotes(notes)) }
+    func remove(noteIdentifiers: [String]) { changes.append(.removedNotes(noteIdentifiers)) }
 }
 
 @MainActor
@@ -134,5 +138,101 @@ struct SpotlightTests {
         let highlights = store.spotlightHighlights()
 
         #expect(Set(highlights.map(\.id)) == [one.id, two.id])
+    }
+
+    // MARK: Page notes and summaries
+
+    private func makeWatcher() -> SpotlightNotesWatcher {
+        let watcher = SpotlightNotesWatcher(context: container.mainContext, index: index)
+        watcher.startWatching()
+        return watcher
+    }
+
+    private var indexedNotes: [[SpotlightNote]] {
+        index.changes.compactMap { change in
+            if case .indexedNotes(let notes) = change { return notes }
+            return nil
+        }
+    }
+
+    @Test func aPageNoteBecomesASpotlightItemThatOpensItsPage() throws {
+        let entry = makeEntry()
+        let note = PageNote(pageIndex: 4, pageLabel: "xii", text: "Compare with figure 2\nand the appendix")
+        container.mainContext.insert(note)
+        note.entry = entry
+
+        let item = try #require(SpotlightNote(note)).searchableItem()
+
+        #expect(item.uniqueIdentifier == "note-\(note.id.uuidString)")
+        #expect(item.domainIdentifier == entry.id.uuidString)
+        #expect(item.attributeSet.title == "Compare with figure 2")
+        #expect(item.attributeSet.contentDescription
+            == "Compare with figure 2\nand the appendix\nNote on page xii of \u{201C}Attention Is All You Need\u{201D}")
+        #expect(SpotlightNote.Target(identifier: item.uniqueIdentifier) == .pageNote(note.id))
+        #expect(SpotlightNote.Target(identifier: entry.id.uuidString) == .highlight(entry.id))
+        #expect(SpotlightNote.Target(identifier: "summary-\(entry.id.uuidString)") == .summary(pdfID: entry.id))
+        #expect(SpotlightNote.Target(identifier: "something else") == nil)
+    }
+
+    @Test func writingChangingAndDeletingPageNotesReachSpotlight() async throws {
+        let entry = makeEntry()
+        store.save()
+        let watcher = makeWatcher()
+
+        let note = store.addPageNote(to: entry, pageIndex: 2, text: "Key definition here")
+        // SwiftData tells of each save a moment later.
+        try await waitUntil { indexedNotes.last?.map(\.text) == ["Key definition here"] }
+        #expect(indexedNotes.last?.first?.identifier == "note-\(note.id.uuidString)")
+
+        store.setText("Key definition, revised", for: note)
+        try await waitUntil { indexedNotes.last?.map(\.text) == ["Key definition, revised"] }
+
+        let id = note.id
+        store.delete(note)
+        try await waitUntil { index.changes.last == .removedNotes(["note-\(id.uuidString)"]) }
+        _ = watcher
+    }
+
+    @Test func summariesReachSpotlightAndRenamingUpdatesNotes() async throws {
+        let entry = makeEntry(title: "Cells")
+        store.save()
+        let watcher = makeWatcher()
+        store.addPageNote(to: entry, pageIndex: 0, text: "Membranes")
+        try await waitUntil { indexedNotes.count == 1 }
+        #expect(watcher.allNotes().count == 1)
+
+        // Reading on (saving the page) doesn't send anything again.
+        entry.recordPage(3)
+        store.save()
+        store.setSummary("Cells are made of smaller parts.", for: entry)
+        try await waitUntil { indexedNotes.count == 2 }
+        let summary = try #require(indexedNotes.last?.first)
+        #expect(indexedNotes.last?.count == 1)
+        #expect(summary.identifier == "summary-\(entry.id.uuidString)")
+        #expect(summary.searchableItem().attributeSet.title == "My summary of \u{201C}Cells\u{201D}")
+
+        store.rename(entry, to: "Cell Biology")
+        try await waitUntil { indexedNotes.count == 3 }
+        #expect(Set(try #require(indexedNotes.last).map(\.pdfTitle)) == ["Cell Biology"])
+        #expect(indexedNotes.last?.count == 2)
+
+        store.setSummary("", for: entry)
+        try await waitUntil { index.changes.last == .removedNotes(["summary-\(entry.id.uuidString)"]) }
+    }
+
+    @Test func rebuildingTheIndexIncludesNotesAndSummaries() throws {
+        let entry = makeEntry()
+        entry.summary = "In short"
+        let note = PageNote(pageIndex: 1, text: "A note")
+        container.mainContext.insert(note)
+        note.entry = entry
+        let empty = PageNote(pageIndex: 2, text: "  ")
+        container.mainContext.insert(empty)
+        empty.entry = entry
+        store.save()
+
+        let notes = SpotlightNotesWatcher(context: container.mainContext, index: index).allNotes()
+
+        #expect(Set(notes.map(\.identifier)) == ["note-\(note.id.uuidString)", "summary-\(entry.id.uuidString)"])
     }
 }
