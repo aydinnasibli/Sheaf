@@ -73,6 +73,17 @@ struct SheafCommands: Commands {
                 .disabled(reader == nil)
         }
 
+        // Edit > Copy as Quote: “the text” (Title, p. 245), for an essay.
+        CommandGroup(after: .pasteboard) {
+            // Menus can't tell whether text is selected, so with nothing to
+            // quote this beeps, like Use Selection for Find.
+            Button("Copy as Quote") {
+                if reader?.copyQuote() != true { NSSound.beep() }
+            }
+            .keyboardShortcut("c", modifiers: [.command, .shift])
+            .disabled(reader == nil)
+        }
+
         // Edit > Find and Edit > Speech. Replaces the text-editing group,
         // whose spelling and text-changing items a reader doesn't need.
         // When a shortcut changes anywhere in this file, update the Help
@@ -183,6 +194,19 @@ struct SheafCommands: Commands {
             Divider()
             Button("Stop Highlighting") { reader?.activePen = nil }
                 .disabled(reader?.activePen == nil)
+            Divider()
+            // The highlight just made (or clicked): its note on its card, or
+            // in a popover at the highlight when the panel is hidden.
+            Button(reader?.targetHighlight?.note.isEmpty == false ? "Edit Note on Highlight" : "Add Note to Highlight") {
+                if reader?.editNoteOfHighlight() != true { NSSound.beep() }
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+            .disabled(reader?.highlights.isEmpty ?? true)
+            Button(reader.map { $0.hasPageNote(onPage: $0.currentPageIndex) } == true ? "Edit Page Note" : "Add Page Note") {
+                if let reader { reader.editPageNote(onPage: reader.currentPageIndex) }
+            }
+            .keyboardShortcut("n", modifiers: [.command, .control])
+            .disabled(reader?.entry == nil)
         }
 
         CommandMenu("Go") {

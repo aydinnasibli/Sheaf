@@ -69,7 +69,7 @@ struct ContentsList: View {
                                     .multilineTextAlignment(.leading)
                                 Spacer(minLength: 4)
                                 if let page = row.pageIndex {
-                                    Text(String(page + 1))
+                                    Text(model.pageLabel(at: page))
                                         .font(.system(size: 11.5))
                                         .monospacedDigit()
                                         .foregroundStyle(Theme.inkMuted)
@@ -83,7 +83,7 @@ struct ContentsList: View {
                             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(isCurrent ? Theme.control : .clear, lineWidth: 1))
                         }
                         .buttonStyle(.sheaf(cornerRadius: 7))
-                        .accessibilityLabel(row.pageIndex.map { "\(row.title), page \($0 + 1)" } ?? row.title)
+                        .accessibilityLabel(row.pageIndex.map { "\(row.title), page \(model.pageLabel(at: $0))" } ?? row.title)
                         .accessibilityAddTraits(isCurrent ? .isSelected : [])
                         .id(row.id)
                     }
@@ -109,16 +109,29 @@ struct ThumbnailList: View {
             ScrollView {
                 LazyVStack(spacing: 18) {
                     ForEach(0..<model.pageCount, id: \.self) { index in
+                        let isBookmarked = model.bookmarks.contains(index)
+                        let note = model.pageNote(onPage: index)
                         ThumbnailCell(
                             model: model,
                             index: index,
                             isCurrent: isCurrent(index),
-                            isBookmarked: model.bookmarks.contains(index),
+                            isBookmarked: isBookmarked,
+                            hasNote: note != nil,
                             markers: model.markers(onPage: index)
                         ) {
                             model.goToPage(number: index + 1)
                         }
                         .id(index)
+                        .contextMenu {
+                            Button(note == nil ? "Add Page Note" : "Edit Page Note") { model.editPageNote(onPage: index) }
+                                .disabled(model.entry == nil)
+                            if let note {
+                                Button("Delete Page Note") { model.deletePageNote(note) }
+                            }
+                            Divider()
+                            Button(isBookmarked ? "Remove Bookmark" : "Bookmark Page") { model.toggleBookmark(page: index) }
+                                .disabled(model.entry == nil)
+                        }
                     }
                 }
                 .padding(.vertical, 18)
@@ -156,6 +169,7 @@ struct ThumbnailCell: View {
     let index: Int
     let isCurrent: Bool
     var isBookmarked = false
+    var hasNote = false
     let markers: [(position: Double, kind: HighlightKind)]
     let action: () -> Void
 
@@ -166,7 +180,15 @@ struct ThumbnailCell: View {
     @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
     @Environment(\.colorScheme) private var colorScheme
 
-    private var number: Int { index + 1 }
+    /// The page's printed label, or its number.
+    private var number: String { model.pageLabel(at: index) }
+
+    private var spokenLabel: String {
+        var label = "Page \(number)"
+        if isBookmarked { label += ", bookmarked" }
+        if hasNote { label += ", has a note" }
+        return label
+    }
 
     /// Thumbnails follow Dark Pages, like the page itself.
     private var isDarkPage: Bool { darkPages && colorScheme == .dark }
@@ -208,6 +230,17 @@ struct ThumbnailCell: View {
                             .accessibilityHidden(true)
                     }
                 }
+                .overlay(alignment: .bottomLeading) {
+                    // Pages with a note get a note in the same margin.
+                    if hasNote {
+                        Image(systemName: "note.text")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .offset(x: -17)
+                            .help("This page has a note")
+                            .accessibilityHidden(true)
+                    }
+                }
                 .overlay(alignment: .topTrailing) {
                     ForEach(Array(markers.enumerated()), id: \.offset) { _, marker in
                         Capsule()
@@ -216,7 +249,7 @@ struct ThumbnailCell: View {
                             .offset(x: 7, y: max(0, size.height * marker.position - 7))
                     }
                 }
-                Text(String(number))
+                Text(number)
                     .font(.system(size: 11.5, weight: isCurrent ? .bold : .medium))
                     .monospacedDigit()
                     .foregroundStyle(isCurrent || isHovered ? Theme.ink : Theme.inkSecondary)
@@ -224,7 +257,7 @@ struct ThumbnailCell: View {
         }
         .buttonStyle(.sheaf(.quiet, in: Rectangle()))
         .onHover { isHovered = $0 }
-        .accessibilityLabel(isBookmarked ? "Page \(number), bookmarked" : "Page \(number)")
+        .accessibilityLabel(spokenLabel)
         .task(id: key) {
             // Cancelled if the row scrolls away first, so it's never drawn.
             if let drawn = await model.thumbnail(forPage: index) { image = drawn }

@@ -66,6 +66,42 @@ enum TestPDF {
         return document
     }
 
+    /// A PDF with printed page labels, one page per string, each drawn as a
+    /// line of text at (72, 700). `labels` is the PDF's /PageLabels number
+    /// tree, like `0 << /S /r >> 2 << /S /D /St 245 >>` for i, ii, 245, 246.
+    /// Written by hand: Core Graphics and PDFKit can't write page labels.
+    static func labeledData(pages: [String], labels: String) -> Data {
+        let kids = pages.indices.map { "\(4 + $0 * 2) 0 R" }.joined(separator: " ")
+        var objects = [
+            "<< /Type /Catalog /Pages 2 0 R /PageLabels << /Nums [\(labels)] >> >>",
+            "<< /Type /Pages /Kids [\(kids)] /Count \(pages.count) >>",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ]
+        for (index, text) in pages.enumerated() {
+            let content = "BT /F1 14 Tf 72 700 Td (\(text)) Tj ET"
+            objects.append("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents \(5 + index * 2) 0 R >>")
+            objects.append("<< /Length \(content.utf8.count) >>\nstream\n\(content)\nendstream")
+        }
+        var file = "%PDF-1.4\n"
+        var offsets: [Int] = []
+        for (index, object) in objects.enumerated() {
+            offsets.append(file.utf8.count)
+            file += "\(index + 1) 0 obj\n\(object)\nendobj\n"
+        }
+        let table = file.utf8.count
+        file += "xref\n0 \(objects.count + 1)\n0000000000 65535 f \n"
+        for offset in offsets { file += String(format: "%010d 00000 n \n", offset) }
+        file += "trailer\n<< /Size \(objects.count + 1) /Root 1 0 R >>\nstartxref\n\(table)\n%%EOF\n"
+        return Data(file.utf8)
+    }
+
+    static func make(pages: [String], labels: String) -> PDFDocument {
+        guard let document = PDFDocument(data: labeledData(pages: pages, labels: labels)) else {
+            fatalError("PDFKit couldn't read the labeled test PDF")
+        }
+        return document
+    }
+
     /// A page-sized image (at 2x) with a large line of text in `scannedLineRect`.
     private static func picture(of text: String, size: CGSize) -> CGImage {
         let scale: CGFloat = 2

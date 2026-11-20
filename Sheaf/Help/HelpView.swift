@@ -168,8 +168,11 @@ struct HelpView: View {
     private var notes: some View {
         VStack(alignment: .leading, spacing: 14) {
             Paragraph("Any highlight can have a note: a thought, a question to follow up, a reminder of why it matters.")
-            Paragraph("In the Highlights panel on the right, point at a highlight and click **Add note**. Type, then press Return to save, or Esc to cancel. Click a note to change it.")
-            Paragraph("The **Notes** page in the library gathers every highlight with a note, from all your PDFs. To keep your highlights and notes outside Sheaf, click **Export highlights as Markdown** at the bottom of the Highlights panel.")
+            Paragraph("Click a highlight on the page to write its note right there, change its color, copy it or delete it. Or, in the Highlights panel on the right, click **Add note** under a highlight. Type, then press Return to save, or Esc to cancel. \u{2325}\u{2318}N writes a note on the highlight you just made.")
+            Paragraph("**Page notes** are for a whole page, like a slide, a diagram or a scanned page. Choose Highlight \u{203A} Add Page Note (\u{2303}\u{2318}N), or Control-click a page in the page strip. They\u{2019}re listed in the Highlights panel under their page.")
+            Paragraph("**My summary**, at the top of the Highlights panel, is for what the whole PDF is about, in your own words.")
+            Paragraph("Edit \u{203A} Copy as Quote (\u{21E7}\u{2318}C) copies a highlight, or the selected text, as \u{201C}the text\u{201D} (Title, p. 245), ready for an essay. You can also drag a highlight out of the Highlights panel into another app. Sheaf uses the page numbers printed in the PDF, like xii or 245, when it has them.")
+            Paragraph("The **Notes** page in the library gathers your summaries, page notes and highlights with a note, from all your PDFs. To keep them outside Sheaf, click **Export as Markdown** at the bottom of the Highlights panel.")
         }
     }
 
@@ -178,6 +181,8 @@ struct HelpView: View {
             Subsection("Focus mode", "View \u{203A} Focus Mode (\u{21E7}\u{2318}F) hides the panels and fills the screen with the page. Press Esc or \u{21E7}\u{2318}F to come back.")
             Subsection("Bookmarks", "Press \u{2318}D, or click the bookmark in the toolbar, to bookmark the page you\u{2019}re on. Bookmarked pages get a ribbon in the page strip and are listed at the top of the Highlights panel; click one to go there.")
             Subsection("Back", "When you jump somewhere (by following a link, or clicking the contents, a page, a search result or a highlight), a Back button appears at the bottom left of the page. Click it, or press \u{2318}[, to return to where you were. \u{2318}] goes forward again.")
+            Subsection("Going to a page", "Go \u{203A} Go to Page (\u{2325}\u{2318}G) takes the page number printed in the PDF, like xii or 245, or a number counted from the first page.")
+            Subsection("Reading progress", "The library counts a page as read when you read your way to it, by turning pages or scrolling, or once it has been on screen for ten seconds. Following a link to the references, or jumping to the last page, doesn\u{2019}t make a PDF Finished.")
             Subsection("Reading aloud", "Edit \u{203A} Speech \u{203A} Start Speaking reads the selected text aloud, or the page if nothing is selected. It uses the voice chosen in System Settings \u{203A} Accessibility \u{203A} Spoken Content.")
             Subsection("Page layout and dark pages", "The View menu and the toolbar set the page layout and size. Sheaf remembers them for the next PDF, and you\u{2019}ll find them in Settings (\u{2318},) too, with Dark Pages in Dark Mode.")
         }

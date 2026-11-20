@@ -21,7 +21,7 @@ struct RecentHighlightsPanel: View {
                             Button { onSelect(record) } label: { card(record) }
                                 .buttonStyle(.sheaf(.overlay, cornerRadius: 12))
                                 .accessibilityLabel(HighlightsPage.spokenLabel(for: record))
-                                .help("Open at page \(record.pageIndex + 1)")
+                                .help("Open at page \(record.displayPage)")
                         }
                     }
                 }
@@ -43,7 +43,7 @@ struct RecentHighlightsPanel: View {
                 .foregroundStyle(Theme.ink)
                 .lineLimit(4)
                 .multilineTextAlignment(.leading)
-            Text("\(record.entry?.title ?? "PDF") \u{00B7} p. \(record.pageIndex + 1)")
+            Text("\(record.entry?.title ?? "PDF") \u{00B7} p. \(record.displayPage)")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.inkSecondary)
                 .lineLimit(1)

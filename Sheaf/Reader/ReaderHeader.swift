@@ -133,8 +133,7 @@ struct PagePill: View {
                 model.goToPreviousPage()
             }
             Button { model.isGoToPagePresented = true } label: {
-                (Text(model.pageLabel).fontWeight(.semibold).foregroundStyle(Theme.ink)
-                    + Text(" / \(model.pageCount)").foregroundStyle(Theme.inkMuted))
+                pageText
                     .font(.system(size: 13))
                     .monospacedDigit()
                     .padding(.horizontal, 6)
@@ -142,6 +141,8 @@ struct PagePill: View {
             }
             .buttonStyle(.sheaf(cornerRadius: 7))
             .help("Go to page (\u{2325}\u{2318}G)")
+            .accessibilityLabel(spokenPage)
+            .accessibilityHint("Goes to a page")
             PillIconButton(label: "Next page", systemImage: sideways ? "chevron.right" : "chevron.down", isEnabled: model.canGoToNextPage) {
                 model.goToNextPage()
             }
@@ -153,6 +154,21 @@ struct PagePill: View {
                 model.toggleBookmark()
             }
         }
+    }
+
+    /// "4 / 12", or with printed page numbers that differ from the count,
+    /// "xii (14 of 244)", as Acrobat shows it.
+    private var pageText: Text {
+        let label = Text(model.pageLabel).fontWeight(.semibold).foregroundStyle(Theme.ink)
+        guard model.pageLabel != model.pagePosition else {
+            return label + Text(" / \(model.pageCount)").foregroundStyle(Theme.inkMuted)
+        }
+        return label + Text(" (\(model.pagePosition) of \(model.pageCount))").foregroundStyle(Theme.inkMuted)
+    }
+
+    private var spokenPage: String {
+        guard model.pageLabel != model.pagePosition else { return "Page \(model.pageLabel) of \(model.pageCount)" }
+        return "Page \(model.pageLabel), \(model.pagePosition) of \(model.pageCount)"
     }
 }
 

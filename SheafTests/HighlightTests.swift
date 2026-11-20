@@ -146,8 +146,8 @@ struct HighlightTests {
         let markdown = model.markdownExport()
 
         #expect(markdown.hasPrefix("# Paper"))
-        #expect(markdown.contains("## Key idea\n\n- \u{201C}Alpha idea\u{201D} (p. 1)"))
-        #expect(markdown.contains("## Question\n\n- \u{201C}beta question\u{201D} (p. 1)\n  - Ask the author"))
+        #expect(markdown.contains("## Key idea\n\n- \u{201C}Alpha idea\u{201D} (Paper, p. 1)"))
+        #expect(markdown.contains("## Question\n\n- \u{201C}beta question\u{201D} (Paper, p. 1)\n  - Ask the author"))
         #expect(!markdown.contains("## Definition"))
     }
 

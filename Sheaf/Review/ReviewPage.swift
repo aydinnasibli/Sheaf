@@ -384,7 +384,7 @@ private struct FlashCard: View {
     let isRevealed: Bool
     let reveal: () -> Void
 
-    private var page: Int { card.pageIndex + 1 }
+    private var page: String { card.page }
 
     var body: some View {
         Button(action: reveal) {
@@ -604,7 +604,7 @@ private struct ReviewSummary: View {
                                 .foregroundStyle(Theme.inkSecondary)
                                 .lineLimit(2)
                         }
-                        Text("\(card.title) \u{00B7} p. \(card.pageIndex + 1)")
+                        Text("\(card.title) \u{00B7} p. \(card.page)")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.inkSecondary)
                             .lineLimit(1)
@@ -617,7 +617,7 @@ private struct ReviewSummary: View {
                 }
                 .buttonStyle(.sheaf(.overlay, cornerRadius: 12))
                 .help("Open \u{201C}\(card.title)\u{201D} at this highlight")
-                .accessibilityLabel("\(card.kind.name): \(card.text). \(card.title), page \(card.pageIndex + 1)")
+                .accessibilityLabel("\(card.kind.name): \(card.text). \(card.title), page \(card.page)")
             }
         }
         .frame(maxWidth: 560)

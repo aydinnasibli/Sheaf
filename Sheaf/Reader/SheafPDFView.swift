@@ -2,10 +2,13 @@ import PDFKit
 import SwiftUI
 
 /// PDFKit's page view with additions for highlighting: it reports when
-/// a mouse selection ends, handles the 1–4 highlighter keys, and lets you
-/// drag a box to highlight an area.
+/// a mouse selection ends and when a page is clicked, handles the 1–4
+/// highlighter keys, and lets you drag a box to highlight an area.
 final class SheafPDFView: PDFView {
     var onMouseUp: (() -> Void)?
+    /// A page was clicked, not dragged on, at this point (in page
+    /// coordinates): to open the highlight there.
+    var onPageClick: ((PDFPage, CGPoint) -> Void)?
     /// Return true if the key was used.
     var onHighlightKey: ((HighlightKind) -> Bool)?
     /// Asked when the mouse goes down on a page: the highlighter to drag a
@@ -14,8 +17,9 @@ final class SheafPDFView: PDFView {
     var boxHighlightKind: ((PDFPage, NSEvent.ModifierFlags) -> HighlightKind?)?
     /// A box was dragged out on a page (in page coordinates).
     var onBoxDrawn: ((CGRect, PDFPage, HighlightKind) -> Void)?
-    /// The mouse was clicked, not dragged, where a box would start.
-    var onBoxClick: ((PDFPage) -> Void)?
+    /// The mouse was clicked, not dragged, where a box would start, at this
+    /// point on the page.
+    var onBoxClick: ((PDFPage, CGPoint) -> Void)?
     /// Search matches on scanned pages. Set up before any page shows, since
     /// PDFKit asks for page overlays only when it lays out a page.
     let recognizedMatches = RecognizedMatchOverlay()
@@ -43,33 +47,71 @@ final class SheafPDFView: PDFView {
     var onFollowLink: (() -> Void)?
 
     override func mouseDown(with event: NSEvent) {
+        // A second click (of a double-click that selects a word) isn't a
+        // click on a highlight.
+        pendingClick?.cancel()
+        pendingClick = nil
         if event.clickCount == 1, let (page, kind) = boxStart(for: event) {
             trackBox(from: event, on: page, kind: kind)
             return
         }
-        if event.clickCount == 1, isInternalLink(at: event) {
+        let link = event.clickCount == 1 ? linkAnnotation(at: event) : nil
+        if let link, link.destination != nil || link.action is PDFActionGoTo {
             onFollowLink?()
         }
+        // Links do their own thing when clicked; Control-click opens the
+        // menu, and Shift- or Command-click changes the selection.
+        let isPlainClick = event.clickCount == 1 && link == nil
+            && event.modifierFlags.isDisjoint(with: [.control, .command, .shift])
+        clickStart = isPlainClick ? event.locationInWindow : nil
         super.mouseDown(with: event)
         // PDFView tracks text-selection drags inside mouseDown, so the mouse
         // may already be up by the time it returns.
         if NSEvent.pressedMouseButtons & 1 == 0 {
             onMouseUp?()
+            finishClick(at: window?.mouseLocationOutsideOfEventStream)
         }
     }
 
-    /// Whether the click is on a link to a page in this PDF (not a web link).
-    private func isInternalLink(at event: NSEvent) -> Bool {
+    /// The link under the mouse, if any.
+    private func linkAnnotation(at event: NSEvent) -> PDFAnnotation? {
         let point = convert(event.locationInWindow, from: nil)
         guard let page = page(for: point, nearest: false),
-              let annotation = page.annotation(at: convert(point, to: page))
-        else { return false }
-        return annotation.destination != nil || annotation.action is PDFActionGoTo
+              let annotation = page.annotation(at: convert(point, to: page)),
+              annotation.type == "Link" || annotation.destination != nil || annotation.action != nil
+        else { return nil }
+        return annotation
     }
 
     override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
         onMouseUp?()
+        finishClick(at: event.locationInWindow)
+    }
+
+    // MARK: Clicks
+
+    /// Where the mouse went down, in window coordinates, while it might be a click.
+    private var clickStart: NSPoint?
+    private var pendingClick: Task<Void, Never>?
+
+    /// The mouse is up: if it didn't move and selected nothing, it was a
+    /// click. It's reported after a moment, unless a second click follows.
+    private func finishClick(at location: NSPoint?) {
+        guard let start = clickStart else { return }
+        clickStart = nil
+        guard let location, hypot(location.x - start.x, location.y - start.y) < 4,
+              (currentSelection?.string ?? "").isEmpty
+        else { return }
+        let point = convert(start, from: nil)
+        guard let page = page(for: point, nearest: false) else { return }
+        let onPage = convert(point, to: page)
+        let wait = min(NSEvent.doubleClickInterval, 0.35)
+        pendingClick = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return }
+            self?.onPageClick?(page, onPage)
+        }
     }
 
     // MARK: Box highlights
@@ -110,7 +152,7 @@ final class SheafPDFView: PDFView {
         if !box.isNull, box.width >= 4, box.height >= 4 {
             onBoxDrawn?(box, page, kind)
         } else {
-            onBoxClick?(page)
+            onBoxClick?(page, start)
         }
     }
 

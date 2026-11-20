@@ -14,6 +14,10 @@ final class HighlightRecord {
     var createdAt: Date
     /// One rectangle per line, in page coordinates: x, y, width, height, …
     var rectValues: [Double]
+    /// The page's printed label, such as "xii" or "245", when the PDF has
+    /// labels. Kept here so the library can cite the page without opening
+    /// the PDF. Empty for PDFs without labels and older highlights.
+    var pageLabel = ""
     var entry: LibraryEntry?
 
     init(pageIndex: Int, kind: HighlightKind, text: String, rects: [CGRect], now: Date = .now) {

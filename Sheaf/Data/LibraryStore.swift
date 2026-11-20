@@ -35,12 +35,14 @@ final class LibraryStore {
         self.originalsFolder = originalsFolder
     }
 
+    /// Everything the library stores.
+    static var models: [any PersistentModel.Type] {
+        [LibraryEntry.self, PDFCollection.self, HighlightRecord.self, PageNote.self]
+    }
+
     /// Creates the on-disk library used by the app.
     static func makeContainer(inMemory: Bool = false) throws -> ModelContainer {
-        try ModelContainer(
-            for: LibraryEntry.self, PDFCollection.self, HighlightRecord.self,
-            configurations: ModelConfiguration(isStoredInMemoryOnly: inMemory)
-        )
+        try ModelContainer(for: Schema(models), configurations: ModelConfiguration(isStoredInMemoryOnly: inMemory))
     }
 
     /// Opens the app's library. On disk, its files are first copied into
@@ -68,11 +70,14 @@ final class LibraryStore {
 
     // MARK: Highlights
 
+    /// `pageLabel` is the page's printed label, if the PDF has labels.
     @discardableResult
     func addHighlight(
-        to entry: LibraryEntry, pageIndex: Int, kind: HighlightKind, text: String, rects: [CGRect], now: Date = .now
+        to entry: LibraryEntry, pageIndex: Int, kind: HighlightKind, text: String, rects: [CGRect],
+        pageLabel: String = "", now: Date = .now
     ) -> HighlightRecord {
         let record = HighlightRecord(pageIndex: pageIndex, kind: kind, text: text, rects: rects, now: now)
+        record.pageLabel = pageLabel
         context.insert(record)
         record.entry = entry
         entry.needsFileSave = true
@@ -83,15 +88,18 @@ final class LibraryStore {
 
     /// Brings back a deleted highlight with its original ID (for Undo).
     @discardableResult
-    func restoreHighlight(_ snapshot: HighlightSnapshot, to entry: LibraryEntry) -> HighlightRecord {
+    func restoreHighlight(_ snapshot: HighlightSnapshot, to entry: LibraryEntry, pageLabel: String = "") -> HighlightRecord {
         let record = insertRecord(
             id: snapshot.id, into: entry, pageIndex: snapshot.pageIndex,
             kind: HighlightKind(rawValue: snapshot.kindRaw) ?? .keyIdea,
             text: snapshot.text, note: snapshot.note, rects: snapshot.rects, createdAt: snapshot.createdAt
         )
+        record.pageLabel = pageLabel
         entry.removedHighlightIDs.removeAll { $0 == snapshot.id }
         entry.needsFileSave = true
         save()
+        // Spotlight first heard about it without the label.
+        if !pageLabel.isEmpty { searchIndex?.index(record) }
         return record
     }
 
@@ -180,6 +188,40 @@ final class LibraryStore {
         if let fresh = Self.makeBookmark(for: url) {
             entry.bookmark = fresh
         }
+        save()
+    }
+
+    // MARK: Page notes and summaries
+
+    // Kept in the library only, so unlike highlights they never mark the
+    // PDF file as needing a save.
+
+    @discardableResult
+    func addPageNote(
+        to entry: LibraryEntry, pageIndex: Int, pageLabel: String = "", text: String,
+        id: UUID = UUID(), createdAt: Date = .now
+    ) -> PageNote {
+        let note = PageNote(pageIndex: pageIndex, pageLabel: pageLabel, text: text, now: createdAt)
+        note.id = id
+        context.insert(note)
+        note.entry = entry
+        save()
+        return note
+    }
+
+    func setText(_ text: String, for note: PageNote, now: Date = .now) {
+        note.text = text
+        note.modifiedAt = now
+        save()
+    }
+
+    func delete(_ note: PageNote) {
+        context.delete(note)
+        save()
+    }
+
+    func setSummary(_ summary: String, for entry: LibraryEntry) {
+        entry.summary = summary
         save()
     }
 

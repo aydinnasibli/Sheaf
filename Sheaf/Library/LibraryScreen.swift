@@ -57,6 +57,8 @@ struct LibraryScreen: View {
     @Query(sort: \PDFCollection.createdAt) private var collections: [PDFCollection]
     @Query(LibraryScreen.recentHighlightsQuery) private var recentHighlights: [HighlightRecord]
     @Query(sort: \HighlightRecord.createdAt, order: .reverse) private var allHighlights: [HighlightRecord]
+    /// Notes on whole pages, for the Notes page.
+    @Query(sort: \PageNote.createdAt, order: .reverse) private var pageNotes: [PageNote]
 
     @State private var filter = LibraryFilter.all
     @State private var highlightKinds = Set<HighlightKind>()
@@ -142,10 +144,15 @@ struct LibraryScreen: View {
             HighlightsPage(
                 title: scope == .notes ? "Notes" : "Highlights",
                 records: allHighlights.filter { scope != .notes || !$0.note.isEmpty },
+                pageNotes: scope == .notes ? pageNotes : [],
+                summaries: scope == .notes ? entries.filter { !$0.summary.isEmpty } : [],
+                isNotesPage: scope == .notes,
                 searchText: searchText,
                 kinds: $highlightKinds
             ) { record in
                 if let entry = record.entry { WindowRouter.shared.open(entry, at: record) }
+            } onOpenPDF: { entry, page in
+                if let page { open(entry, atPage: page) } else { workspace.openPDFs([entry]) }
             }
         } else {
             main

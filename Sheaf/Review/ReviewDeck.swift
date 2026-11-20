@@ -15,6 +15,11 @@ struct ReviewCard: Identifiable, Hashable {
     let title: String
     /// 0-based.
     let pageIndex: Int
+    /// The page as printed in the PDF ("xii", "245"); empty to show the number.
+    var pageLabel = ""
+
+    /// The page to show: the printed label, else the page number.
+    var page: String { pageLabel.isEmpty ? String(pageIndex + 1) : pageLabel }
 }
 
 extension ReviewCard {
@@ -27,7 +32,8 @@ extension ReviewCard {
             text: record.text.split(whereSeparator: \.isWhitespace).joined(separator: " "),
             note: record.note,
             title: record.entry?.title ?? "PDF",
-            pageIndex: record.pageIndex
+            pageIndex: record.pageIndex,
+            pageLabel: record.displayPage
         )
     }
 }

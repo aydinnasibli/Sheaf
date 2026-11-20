@@ -56,8 +56,11 @@ final class ReaderModel {
     let outlineRows: [OutlineRow]
     /// The library entry for this PDF: reading position and highlights.
     @ObservationIgnored let entry: LibraryEntry?
-    @ObservationIgnored private let store: LibraryStore?
+    @ObservationIgnored let store: LibraryStore?
     @ObservationIgnored let fileURL: URL?
+    /// Printed page labels ("xii", "245"), one per page, or none when the
+    /// pages are just numbered 1, 2, 3…
+    let pageLabels: [String]
 
     private(set) var currentPageIndex = 0
     private(set) var zoomPercent = 100
@@ -117,6 +120,35 @@ final class ReaderModel {
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
     /// Box highlights whose words are still being read, by highlight.
     @ObservationIgnored private var boxReadings: [UUID: Task<Void, Never>] = [:]
+
+    // MARK: Notes state
+
+    /// The highlight clicked on the page, or the one just made. Its card in
+    /// the Highlights panel is outlined, and Copy as Quote and the note
+    /// shortcut act on it.
+    var selectedHighlightID: UUID?
+    /// Page notes, in page order.
+    private(set) var pageNotes: [PageNote] = []
+    /// A highlight whose card should start editing its note; the card
+    /// clears it once it has.
+    var pendingNoteEditID: UUID?
+    /// A page whose note card should start editing; the card clears it.
+    var pendingPageNoteEdit: Int?
+    /// A page without a note where the panel shows an empty note to type in.
+    var pageNoteDraftPage: Int?
+    /// Whether the Highlights panel is on screen. When it isn't (focus mode,
+    /// a narrow window, search results), notes open in a popover instead.
+    @ObservationIgnored var isHighlightsPanelVisible = false
+    /// The popover over the page for a highlight or a page note.
+    @ObservationIgnored let popover = PagePopover()
+
+    // MARK: Reading progress
+
+    @ObservationIgnored private var progress = ReadingProgress()
+    @ObservationIgnored private var dwellTask: Task<Void, Never>?
+    /// How long a page she jumped to stays on screen before it counts as
+    /// read: long enough that a quick look at a reference doesn't.
+    @ObservationIgnored var readingDwell: Duration = .seconds(10)
 
     static let scannedPageNotice = "This page is a scanned image, so its text can\u{2019}t be selected. Drag a box to highlight an area."
     /// The text of a box highlight when no words are found in the box.
@@ -207,6 +239,11 @@ final class ReaderModel {
         self.preferences = preferences
         self.outline = OutlineItem.items(under: document.outlineRoot)
         self.outlineRows = OutlineRow.flatten(outline, in: document)
+        // Saving highlights into a PDF loses its page labels, so the library
+        // remembers them from when the file still had them.
+        let ownLabels = PageLabels.read(from: document)
+        let remembered = entry?.pageLabels ?? []
+        self.pageLabels = ownLabels.isEmpty && remembered.count == document.pageCount ? remembered : ownLabels
         if let saved = preferences.string(forKey: Self.layoutKey), let layout = PageLayout(rawValue: saved) {
             self.layout = layout
         }
@@ -228,7 +265,13 @@ final class ReaderModel {
         pdfView.onHighlightKey = { [weak self] kind in self?.highlightKeyPressed(kind) ?? false }
         pdfView.onAppearanceChange = { [weak self] in self?.applyPageColors() }
         pdfView.onFollowLink = { [weak self] in self?.rememberPlace() }
+        pdfView.onPageClick = { [weak self] page, point in self?.pageClicked(page, at: point) }
         bookmarks = entry?.bookmarkedPages ?? []
+        if !ownLabels.isEmpty, let entry, entry.pageLabels != ownLabels {
+            entry.pageLabels = ownLabels
+            store?.save()
+        }
+        refreshPageNotes()
 
         if document.isEncrypted {
             fileWriteBlock = .passwordProtected
@@ -259,6 +302,8 @@ final class ReaderModel {
     func restoreReadingPosition() {
         guard !hasRestoredPosition else { return }
         hasRestoredPosition = true
+        // Reading on from here counts if this page was read.
+        defer { startTrackingProgress() }
         guard let index = entry?.lastPageIndex, index > 0, index < pageCount,
               let page = document.page(at: index)
         else { return }
@@ -268,6 +313,8 @@ final class ReaderModel {
 
     /// Call when the PDF is closed.
     func close() {
+        popover.close()
+        dwellTask?.cancel()
         stopBackgroundWork()
         document.cancelFindString()
         flushPendingSave()
@@ -277,6 +324,9 @@ final class ReaderModel {
     /// Call when the reader leaves the screen: saves now, and drops undo
     /// steps so ⌘Z elsewhere can't change this PDF unseen.
     func suspend() {
+        // First, so a note typed in the popover is kept.
+        popover.close()
+        dwellTask?.cancel()
         flushPendingSave()
         undoManager?.removeAllActions(withTarget: self)
     }
@@ -301,15 +351,50 @@ final class ReaderModel {
     var canGoToPreviousPage: Bool { (visiblePageIndices.first ?? 0) > 0 }
     var canGoToNextPage: Bool { (visiblePageIndices.last ?? 0) < pageCount - 1 }
 
-    /// "4" or, for a pair of pages, "4–5".
+    /// The pages on screen as printed: "xii", "4" or, for a pair, "4–5".
     var pageLabel: String {
+        let pages = visiblePageIndices
+        guard let first = pages.first, let last = pages.last else { return "0" }
+        return first == last ? pageLabel(at: first) : "\(pageLabel(at: first))\u{2013}\(pageLabel(at: last))"
+    }
+
+    /// The pages on screen by position, counting from 1: "14" or "14–15".
+    var pagePosition: String {
         let pages = visiblePageIndices
         guard let first = pages.first, let last = pages.last else { return "0" }
         return first == last ? String(first + 1) : "\(first + 1)\u{2013}\(last + 1)"
     }
 
+    /// The page's printed label ("xii", "245"), or its number when the PDF
+    /// has no labels.
+    func pageLabel(at index: Int) -> String {
+        pageLabels.indices.contains(index) ? pageLabels[index] : String(index + 1)
+    }
+
+    /// The printed label to keep with a highlight or page note, or "" when
+    /// the PDF has none (the number is shown then).
+    func storedPageLabel(at index: Int) -> String {
+        pageLabels.indices.contains(index) ? pageLabels[index] : ""
+    }
+
+    /// What Go to Page asks for.
+    var goToPagePrompt: String {
+        guard !pageLabels.isEmpty else { return "Enter a page number from 1 to \(pageCount)." }
+        return "Enter a page number as it\u{2019}s printed, like \u{201C}\(pageLabel(at: currentPageIndex))\u{201D}, or a page from 1 to \(pageCount) counting from the start."
+    }
+
     func goToPreviousPage() { pdfView.goToPreviousPage(nil) }
     func goToNextPage() { pdfView.goToNextPage(nil) }
+
+    /// Goes to the page typed in Go to Page: its printed label ("xii",
+    /// "245") or its number counting from 1. Returns false if there's no
+    /// such page.
+    @discardableResult
+    func goToPage(typed: String) -> Bool {
+        guard let index = PageLabels.pageIndex(for: typed, labels: pageLabels, pageCount: pageCount) else { return false }
+        goToPage(number: index + 1)
+        return true
+    }
 
     /// Goes to a 1-based page number, as people type it.
     func goToPage(number: Int) {
@@ -351,8 +436,15 @@ final class ReaderModel {
         backPlaces.last?.page.map { document.index(for: $0) + 1 }
     }
 
+    /// The page Back returns to as printed, for the Back button.
+    var backPageLabel: String? {
+        backPageNumber.map { pageLabel(at: $0 - 1) }
+    }
+
     /// Call just before a jump, so Back can return here.
     func rememberPlace() {
+        // Where it lands doesn't count as read yet.
+        progress.jumpStarting()
         guard hasRestoredPosition, let here = pdfView.currentDestination else { return }
         backPlaces.append(here)
         if backPlaces.count > 50 { backPlaces.removeFirst() }
@@ -361,12 +453,14 @@ final class ReaderModel {
 
     func goBack() {
         guard let place = backPlaces.popLast() else { return }
+        progress.jumpStarting()
         if let here = pdfView.currentDestination { forwardPlaces.append(here) }
         pdfView.go(to: place)
     }
 
     func goForward() {
         guard let place = forwardPlaces.popLast() else { return }
+        progress.jumpStarting()
         if let here = pdfView.currentDestination { backPlaces.append(here) }
         pdfView.go(to: place)
     }
@@ -582,15 +676,18 @@ final class ReaderModel {
                 .compactMap { $0.string?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .joined(separator: " ")
+            let index = document.index(for: page)
             let record = store.addHighlight(
-                to: entry, pageIndex: document.index(for: page), kind: kind, text: text, rects: rects
+                to: entry, pageIndex: index, kind: kind, text: text, rects: rects, pageLabel: storedPageLabel(at: index)
             )
             PDFHighlights.add(record, to: document)
             created.append(HighlightSnapshot(record))
         }
-        guard !created.isEmpty else { return false }
+        guard let first = created.first else { return false }
         pdfView.clearSelection()
         refreshHighlights()
+        // The one just made is the one the note shortcut and Copy as Quote use.
+        selectedHighlightID = first.id
         scheduleSave()
         registerUndo("Highlight") { $0.removeHighlights(created, actionName: "Highlight") }
         return true
@@ -610,10 +707,13 @@ final class ReaderModel {
         let hasText = scannedPages.pageHasText(page, at: index)
         let selected = hasText ? page.selection(for: box)?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" : ""
         let text = selected.isEmpty ? Self.imageAreaText : selected.components(separatedBy: .newlines).joined(separator: " ")
-        let record = store.addHighlight(to: entry, pageIndex: index, kind: kind, text: text, rects: [box])
+        let record = store.addHighlight(
+            to: entry, pageIndex: index, kind: kind, text: text, rects: [box], pageLabel: storedPageLabel(at: index)
+        )
         PDFHighlights.add(record, to: document)
         pdfView.clearSelection()
         refreshHighlights()
+        selectedHighlightID = record.id
         scheduleSave()
         // Undo takes the highlight as it is by then, with the words read from the box.
         let id = record.id
@@ -727,7 +827,7 @@ final class ReaderModel {
     private func restoreHighlights(_ snapshots: [HighlightSnapshot], actionName: String) {
         guard let entry, let store else { return }
         for snapshot in snapshots {
-            store.restoreHighlight(snapshot, to: entry)
+            store.restoreHighlight(snapshot, to: entry, pageLabel: storedPageLabel(at: snapshot.pageIndex))
             PDFHighlights.add(snapshot, to: document)
         }
         refreshHighlights()
@@ -735,7 +835,7 @@ final class ReaderModel {
         registerUndo(actionName) { $0.removeHighlights(snapshots, actionName: actionName) }
     }
 
-    private func registerUndo(_ actionName: String, _ action: @escaping (ReaderModel) -> Void) {
+    func registerUndo(_ actionName: String, _ action: @escaping (ReaderModel) -> Void) {
         guard let undoManager else { return }
         undoManager.registerUndo(withTarget: self) { action($0) }
         undoManager.setActionName(actionName)
@@ -743,6 +843,7 @@ final class ReaderModel {
 
     func go(to record: HighlightRecord) {
         guard let page = document.page(at: record.pageIndex) else { return }
+        select(record)
         rememberPlace()
         if let rect = record.rects.first {
             pdfView.go(to: rect.insetBy(dx: 0, dy: -40), on: page)
@@ -775,26 +876,55 @@ final class ReaderModel {
         }
     }
 
-    /// All highlights as Markdown, grouped by meaning.
+    /// The summary, highlights grouped by meaning and page notes, as
+    /// Markdown. Highlights are cited the way Copy as Quote cites them.
     func markdownExport() -> String {
         var lines = ["# \(title)", ""]
+        let summary = entry?.summary ?? ""
+        if !summary.isEmpty {
+            lines += ["## My summary", "", summary, ""]
+        }
         for kind in HighlightKind.allCases {
             let items = highlights.filter { $0.kind == kind }
             guard !items.isEmpty else { continue }
             lines.append("## \(kind.name)")
             lines.append("")
             for item in items {
-                lines.append("- \u{201C}\(item.text)\u{201D} (p. \(item.pageIndex + 1))")
+                lines.append("- " + Citation.quote(item.text, title: title, page: pageLabel(at: item.pageIndex)))
                 if !item.note.isEmpty {
-                    lines.append("  - \(item.note)")
+                    lines.append("  - " + Self.markdownContinued(item.note, indent: "    "))
                 }
             }
             lines.append("")
         }
-        if highlights.isEmpty {
+        if !pageNotes.isEmpty {
+            lines.append("## Page notes")
+            lines.append("")
+            for note in pageNotes {
+                let source = Citation.source(title: title, page: pageLabel(at: note.pageIndex))
+                lines.append("- " + Self.markdownContinued(note.text, indent: "  ") + " (\(source))")
+            }
+            lines.append("")
+        }
+        if highlights.isEmpty && pageNotes.isEmpty && summary.isEmpty {
             lines.append("No highlights yet.")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Whether there's anything to export: highlights, page notes or a summary.
+    var hasAnythingToExport: Bool {
+        !highlights.isEmpty || !pageNotes.isEmpty || !(entry?.summary.isEmpty ?? true)
+    }
+
+    /// Text over several lines, indented so Markdown keeps it in its list item.
+    private static func markdownContinued(_ text: String, indent: String) -> String {
+        text.components(separatedBy: .newlines).joined(separator: "\n" + indent)
+    }
+
+    /// Reads the page notes from the library again, after a change.
+    func refreshPageNotes() {
+        pageNotes = (entry?.pageNotes ?? []).sorted { ($0.pageIndex, $0.createdAt) < ($1.pageIndex, $1.createdAt) }
     }
 
     private func refreshHighlights() {
@@ -986,7 +1116,7 @@ final class ReaderModel {
     func selectResult(id: SearchResult.ID) {
         guard searchResults.indices.contains(id) else { return }
         // Back returns to where the search started, not to each match.
-        if selectedResultID == nil { rememberPlace() }
+        if selectedResultID == nil { rememberPlace() } else { progress.jumpStarting() }
         let result = searchResults[id]
         selectedResultID = id
         switch result.match {
@@ -1058,7 +1188,7 @@ final class ReaderModel {
 
         selection.color = .findHighlightColor
         pendingMatches.append(FoundMatch(
-            key: key, pageIndex: pageIndex, pageLabel: page.label ?? String(pageIndex + 1), match: .text(selection)
+            key: key, pageIndex: pageIndex, pageLabel: pageLabel(at: pageIndex), match: .text(selection)
         ))
     }
 
@@ -1082,7 +1212,7 @@ final class ReaderModel {
     /// Finds the query in a scanned page's text. Returns whether it's there.
     @discardableResult
     private func addRecognizedMatches(on page: RecognizedPage) -> Bool {
-        let label = document.page(at: page.index)?.label ?? String(page.index + 1)
+        let label = pageLabel(at: page.index)
         let found = page.matches(of: activeQuery).map { match in
             FoundMatch(
                 key: MatchKey(pageIndex: page.index, bounds: match.rect), pageIndex: page.index,
@@ -1168,8 +1298,35 @@ final class ReaderModel {
         guard let page = pdfView.currentPage else { return }
         currentPageIndex = document.index(for: page)
         // Don't overwrite the saved page with page 1 while the tab is still opening.
-        if hasRestoredPosition {
-            entry?.recordPage(currentPageIndex)
+        guard hasRestoredPosition, let entry else { return }
+        entry.recordPosition(currentPageIndex)
+        // A page counts as read when she reads her way to it, or once it
+        // has been on screen a while; not when she jumps to it.
+        let shown = visiblePageIndices.last ?? currentPageIndex
+        guard shown != progress.lastPage else { return }
+        if progress.arrive(at: shown, furthestRead: entry.furthestPageIndex) {
+            entry.recordRead(shown)
+        }
+        countAsReadLater(shown)
+    }
+
+    /// Where reading starts when the PDF opens: the page it opened at.
+    private func startTrackingProgress() {
+        if let page = pdfView.currentPage { currentPageIndex = document.index(for: page) }
+        let shown = visiblePageIndices.last ?? currentPageIndex
+        progress.start(at: shown)
+        countAsReadLater(shown)
+    }
+
+    /// Counts the page as read if it's still on screen after `readingDwell`.
+    private func countAsReadLater(_ page: Int) {
+        dwellTask?.cancel()
+        guard let entry, page > entry.furthestPageIndex else { return }
+        let delay = readingDwell
+        dwellTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self, (visiblePageIndices.last ?? currentPageIndex) == page else { return }
+            entry.recordRead(page)
         }
     }
 

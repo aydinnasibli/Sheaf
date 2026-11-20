@@ -31,11 +31,20 @@ final class LibraryEntry {
     /// next save takes them out; until then, opening the file doesn't bring
     /// them back into the library.
     var removedHighlightIDs: [UUID] = []
+    /// Her summary of the PDF, in her own words ("My summary"). Kept in
+    /// Sheaf only, not in the file.
+    var summary = ""
+    /// The PDF's printed page labels ("i", "ii", "1", …), one per page, when
+    /// they differ from plain page numbers. Remembered because saving
+    /// highlights into a PDF loses its labels (PDFKit doesn't write them).
+    var pageLabels: [String] = []
     /// A small image of the first page, as PNG.
     @Attribute(.externalStorage) var cover: Data?
     var collection: PDFCollection?
     @Relationship(deleteRule: .cascade, inverse: \HighlightRecord.entry)
     var highlights: [HighlightRecord] = []
+    @Relationship(deleteRule: .cascade, inverse: \PageNote.entry)
+    var pageNotes: [PageNote] = []
 
     init(title: String, path: String, pageCount: Int, now: Date = .now) {
         self.title = title
@@ -56,11 +65,34 @@ final class LibraryEntry {
         return furthestPageIndex >= pageCount - 1 ? .finished : .inProgress
     }
 
-    /// Records the page the reader is on.
+    /// Records the page the reader is on, and that it was read.
     func recordPage(_ index: Int) {
+        recordPosition(index)
+        recordRead(index)
+    }
+
+    /// Records where the reader is, to open there next time. Doesn't count
+    /// the page as read: she may only have jumped there.
+    func recordPosition(_ index: Int) {
         guard index >= 0, index < max(pageCount, 1) else { return }
         lastPageIndex = index
+    }
+
+    /// Records that a page was read, moving "furthest read" on if it's past it.
+    func recordRead(_ index: Int) {
+        guard index >= 0, index < max(pageCount, 1) else { return }
         furthestPageIndex = max(furthestPageIndex, index)
+    }
+
+    /// The page's printed label as remembered, else its number (1-based).
+    func label(ofPage index: Int) -> String {
+        pageLabels.indices.contains(index) && pageLabels.count == pageCount ? pageLabels[index] : String(index + 1)
+    }
+
+    /// What this PDF has on the library's Notes page: page notes, highlights
+    /// with a note, and the summary.
+    var notesCount: Int {
+        pageNotes.count + highlights.count { !$0.note.isEmpty } + (summary.isEmpty ? 0 : 1)
     }
 
     /// Number of highlights of each kind, in `HighlightKind.allCases` order.

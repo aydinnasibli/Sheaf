@@ -20,8 +20,13 @@ every PDF you read.
   shows your note, or the PDF and page; Space shows the highlight; 1 Again, 2 Got it
 - **Reader** with page thumbnails, table of contents, single / two-page / scroll layouts,
   zoom, search, and your place remembered
-- **Highlighting** with keys 1–4 or the toolbar, notes on each highlight, undo,
-  and export to Markdown
+- **Highlighting** with keys 1–4 or the toolbar, undo, and export to Markdown.
+  Click a highlight on the page to write its note, change its color, copy or delete it
+- **Notes and citations**: notes on highlights and on whole pages, a summary of each PDF,
+  the page numbers printed in the PDF (xii, 245), and Copy as Quote (⇧⌘C):
+  “the text” (Title, p. 245). Kept in Sheaf's library, not in the file
+- **Honest reading progress**: a page counts as read when you read your way to it, or
+  after it has been on screen a while, not when a link jumps there
 - Highlights are saved **inside the PDF** as standard annotations (so Preview shows them)
   **and** in Sheaf's library. Password-protected and digitally signed PDFs are never rewritten.
 - One window: the library, or the PDF you're reading; switch with ⌃Tab or ⇧⌘] / ⇧⌘[

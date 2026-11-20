@@ -18,6 +18,8 @@ struct HighlightsPanel: View {
                     .foregroundStyle(Theme.inkMuted)
             }
 
+            SummarySection(model: model)
+
             HighlightFilterChips(model: model)
 
             if !model.bookmarks.isEmpty {
@@ -31,36 +33,75 @@ struct HighlightsPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if model.highlights.isEmpty {
+            if model.highlights.isEmpty && model.pageNotes.isEmpty && model.pageNoteDraftPage == nil {
                 emptyState
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(model.highlightGroups, id: \.page) { group in
-                            SectionLabel(title: "Page \(group.page + 1)")
-                                .padding(.top, 6)
-                            ForEach(group.items) { record in
-                                HighlightCard(record: record, model: model)
-                            }
-                        }
-                    }
-                }
+                list
             }
 
             Spacer(minLength: 0)
 
             SecondaryButton(
-                title: "Export highlights as Markdown",
+                title: "Export as Markdown",
                 systemImage: "square.and.arrow.down",
                 fillsWidth: true,
                 action: export
             )
-            .disabled(model.highlights.isEmpty)
+            .help("Save your summary, highlights and notes as a Markdown file")
+            .disabled(!model.hasAnythingToExport)
         }
         .padding(.horizontal, 16)
         .padding(.top, 18)
         .padding(.bottom, 16)
         .background(Theme.background)
+        // While the panel is hidden (focus mode, a narrow window, search
+        // results), notes open in a popover on the page instead.
+        .onAppear { model.isHighlightsPanelVisible = true }
+        .onDisappear { model.isHighlightsPanelVisible = false }
+    }
+
+    /// Pages with their note and highlights, as one list so any card can be
+    /// scrolled to.
+    private var list: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(rows) { row in
+                        switch row {
+                        case .page(let page):
+                            SectionLabel(title: "Page \(model.pageLabel(at: page))")
+                                .padding(.top, 6)
+                        case .pageNote(let page, let note):
+                            PageNoteCard(model: model, page: page, note: note)
+                        case .highlight(let record):
+                            HighlightCard(record: record, model: model, isSelected: model.selectedHighlightID == record.id)
+                        }
+                    }
+                }
+            }
+            // A highlight clicked on the page, or just made, comes into view.
+            .onChange(of: model.selectedHighlightID) { _, id in
+                guard let id else { return }
+                withAnimation(Theme.motion) { proxy.scrollTo(PanelRow.ID.highlight(id)) }
+            }
+            .onChange(of: model.pendingNoteEditID) { _, id in
+                if let id { proxy.scrollTo(PanelRow.ID.highlight(id)) }
+            }
+            .onChange(of: model.pendingPageNoteEdit) { _, page in
+                if let page { proxy.scrollTo(PanelRow.ID.pageNote(page)) }
+            }
+        }
+    }
+
+    private var rows: [PanelRow] {
+        model.panelGroups.flatMap { group in
+            var rows: [PanelRow] = [.page(group.page)]
+            if group.note != nil || group.hasDraftNote {
+                rows.append(.pageNote(group.page, group.note))
+            }
+            rows += group.items.map(PanelRow.highlight)
+            return rows
+        }
     }
 
     private var emptyState: some View {
@@ -77,6 +118,8 @@ struct HighlightsPanel: View {
     }
 
     private func export() {
+        // A summary or note being typed is saved first, so it's in the file.
+        NotificationCenter.default.post(name: .sheafFlushSaves, object: nil)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
         panel.nameFieldStringValue = "\(model.title) highlights.md"
@@ -98,8 +141,9 @@ struct BookmarkChips: View {
             FlowLayout(spacing: 6) {
                 ForEach(model.bookmarks, id: \.self) { index in
                     let isHere = model.visiblePageIndices.contains(index)
+                    let label = model.pageLabel(at: index)
                     Button { model.goToBookmark(index) } label: {
-                        Label("Page \(index + 1)", systemImage: "bookmark.fill")
+                        Label("Page \(label)", systemImage: "bookmark.fill")
                             .font(.system(size: 11.5, weight: .semibold))
                             .foregroundStyle(Theme.ink)
                             .fixedSize()
@@ -109,8 +153,8 @@ struct BookmarkChips: View {
                             .overlay(Capsule().strokeBorder(isHere ? Theme.accent : .clear, lineWidth: 1.5))
                     }
                     .buttonStyle(.sheaf(.overlay, in: Capsule()))
-                    .help("Go to page \(index + 1)")
-                    .accessibilityLabel("Bookmark, page \(index + 1)")
+                    .help("Go to page \(label)")
+                    .accessibilityLabel("Bookmark, page \(label)")
                     .contextMenu {
                         Button("Remove Bookmark") { model.toggleBookmark(page: index) }
                     }
@@ -151,15 +195,19 @@ struct HighlightFilterChips: View {
 }
 
 /// A highlight in the panel. Click the text to go to it; click the note
-/// (or "Add note") to type a note right on the card.
+/// (or "Add note") to type a note right on the card. Drag the text out of
+/// Sheaf to drop it as a quote.
 struct HighlightCard: View {
     let record: HighlightRecord
     let model: ReaderModel
+    /// Clicked on the page or just made: outlined.
+    var isSelected = false
 
     @State private var isEditing = false
     @State private var draft = ""
     @State private var isHovered = false
     @FocusState private var isNoteFocused: Bool
+    @FocusState private var isAddNoteFocused: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -175,9 +223,12 @@ struct HighlightCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.sheaf(.quiet, in: Rectangle()))
-                .help("Go to this highlight")
+                .help("Go to this highlight. Drag it out of Sheaf to drop it as a quote.")
                 .accessibilityLabel("\(record.kind.name): \(record.text)")
                 .accessibilityHint("Goes to this highlight")
+                .accessibilityAction(named: record.note.isEmpty ? "Add note" : "Edit note", startEditing)
+                .accessibilityAction(named: "Copy as quote") { Citation.copy(model.quote(for: record)) }
+                .onDrag { Citation.dragItem(model.quote(for: record)) }
 
                 if isEditing {
                     TextField("Write a note\u{2026}", text: $draft, axis: .vertical)
@@ -205,16 +256,19 @@ struct HighlightCard: View {
                     .buttonStyle(.sheaf(.quiet, in: Rectangle()))
                     .help("Edit note")
                 } else {
-                    // Always takes its space and fades in under the pointer, so
-                    // hovering a card doesn't push the cards below it down.
+                    // Always takes its space, so hovering a card doesn't push
+                    // the cards below it down. It shows under the pointer, on
+                    // the selected card, and when the keyboard reaches it.
                     Button(action: startEditing) {
                         Label("Add note", systemImage: "plus")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.inkMuted)
                     }
                     .buttonStyle(.sheaf(.quiet, in: Rectangle()))
-                    .opacity(isHovered ? 1 : 0)
-                    .accessibilityHidden(!isHovered)
+                    .focused($isAddNoteFocused)
+                    .opacity(isHovered || isSelected || isAddNoteFocused ? 1 : 0)
+                    .help("Add a note (\u{2325}\u{2318}N for the highlight just made)")
+                    .accessibilityLabel("Add note")
                 }
             }
             Spacer(minLength: 0)
@@ -224,13 +278,17 @@ struct HighlightCard: View {
         .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(isEditing || isHovered ? Theme.control : Theme.border, lineWidth: 1)
+                .strokeBorder(border, lineWidth: isSelected ? 1.5 : 1)
         )
         .animation(Theme.hoverAnimation, value: isHovered)
+        .animation(Theme.hoverAnimation, value: isSelected)
         .onHover { isHovered = $0 }
         .onChange(of: isNoteFocused) { _, focused in
             if !focused && isEditing { commit() }
         }
+        // The note shortcut asks for this card's note.
+        .onAppear(perform: startEditingIfAsked)
+        .onChange(of: model.pendingNoteEditID) { startEditingIfAsked() }
         .contextMenu {
             Button(record.note.isEmpty ? "Add Note" : "Edit Note", action: startEditing)
             Menu("Change Color") {
@@ -239,13 +297,22 @@ struct HighlightCard: View {
                         .disabled(kind == record.kind)
                 }
             }
-            Button("Copy Text") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(record.text, forType: .string)
-            }
+            Button("Copy Text") { Citation.copy(record.text) }
+            Button("Copy as Quote") { Citation.copy(model.quote(for: record)) }
             Divider()
             Button("Delete Highlight", role: .destructive) { model.delete(record) }
         }
+    }
+
+    private var border: Color {
+        if isSelected { return Theme.accent }
+        return isEditing || isHovered ? Theme.control : Theme.border
+    }
+
+    private func startEditingIfAsked() {
+        guard model.pendingNoteEditID == record.id else { return }
+        model.pendingNoteEditID = nil
+        startEditing()
     }
 
     private func startEditing() {
@@ -258,5 +325,26 @@ struct HighlightCard: View {
         guard isEditing else { return }
         isEditing = false
         model.setNote(draft, for: record)
+    }
+}
+
+/// One row of the Highlights panel's list.
+private enum PanelRow: Identifiable {
+    case page(Int)
+    case pageNote(Int, PageNote?)
+    case highlight(HighlightRecord)
+
+    enum ID: Hashable {
+        case page(Int)
+        case pageNote(Int)
+        case highlight(UUID)
+    }
+
+    var id: ID {
+        switch self {
+        case .page(let page): .page(page)
+        case .pageNote(let page, _): .pageNote(page)
+        case .highlight(let record): .highlight(record.id)
+        }
     }
 }

@@ -21,6 +21,13 @@ enum TestFiles {
         return url
     }
 
+    /// A PDF with printed page labels (see `TestPDF.labeledData`).
+    static func pdf(named name: String = "Paper.pdf", pages: [String], labels: String) throws -> URL {
+        let url = try folder().appending(path: name)
+        try TestPDF.labeledData(pages: pages, labels: labels).write(to: url)
+        return url
+    }
+
     /// A Sheaf highlight over `text` in the PDF at `url`, as Sheaf writes it.
     static func highlight(
         of text: String, in url: URL, kind: HighlightKind = .keyIdea, note: String = "", id: UUID = UUID()

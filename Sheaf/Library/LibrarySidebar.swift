@@ -30,7 +30,8 @@ struct LibrarySidebar: View {
                         scope = .highlights
                         highlightKinds = []
                     }
-                    NavRow(title: "Notes", count: highlights.count { !$0.note.isEmpty }, isSelected: scope == .notes) {
+                    // Highlights with a note, page notes and summaries.
+                    NavRow(title: "Notes", count: entries.reduce(0) { $0 + $1.notesCount }, isSelected: scope == .notes) {
                         Image(systemName: "text.bubble")
                     } action: {
                         scope = .notes

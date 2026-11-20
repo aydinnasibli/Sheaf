@@ -14,8 +14,8 @@ extension ReaderModel {
             guard let self else { return }
             highlightBox(rect, onPage: document.index(for: page), as: kind)
         }
-        pdfView.onBoxClick = { [weak self] page in
-            self?.boxClicked(on: page)
+        pdfView.onBoxClick = { [weak self] page, point in
+            self?.boxClicked(on: page, at: point)
         }
         scannedPages.onPageRead = { [weak self] page in
             self?.recognizedPageArrived(page)
@@ -48,9 +48,14 @@ extension ReaderModel {
         return activePen
     }
 
-    /// A click where a box would start: on a scanned page, explain how
+    /// A click where a box would start: on a highlight, opens it, as a
+    /// click does anywhere; elsewhere on a scanned page, explains how
     /// highlighting works there.
-    private func boxClicked(on page: PDFPage) {
+    private func boxClicked(on page: PDFPage, at point: CGPoint) {
+        if highlight(at: point, onPage: document.index(for: page)) != nil {
+            pageClicked(page, at: point)
+            return
+        }
         guard !scannedPages.pageHasText(page, at: document.index(for: page)) else { return }
         showPageNotice(Self.scannedPageNotice)
     }

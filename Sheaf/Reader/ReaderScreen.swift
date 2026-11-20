@@ -173,16 +173,15 @@ struct ReaderLayout: View {
             isSearchFocused = true
         }
         .alert("Go to Page", isPresented: $model.isGoToPagePresented) {
-            TextField("Page number", text: $pageEntry)
+            TextField("Page", text: $pageEntry)
             Button("Go") {
-                if let number = Int(pageEntry.trimmingCharacters(in: .whitespaces)) {
-                    model.goToPage(number: number)
-                }
+                // A printed page number ("xii", "245") or one counted from the start.
+                if !model.goToPage(typed: pageEntry) { NSSound.beep() }
                 pageEntry = ""
             }
             Button("Cancel", role: .cancel) { pageEntry = "" }
         } message: {
-            Text("Enter a page number from 1 to \(model.pageCount).")
+            Text(model.goToPagePrompt)
         }
         .onChange(of: darkPages) { model.applyPageColors() }
         .task {
@@ -250,7 +249,7 @@ struct ReaderLayout: View {
             }
             .overlay(alignment: .bottomLeading) {
                 ZStack {
-                    if let page = model.backPageNumber {
+                    if let page = model.backPageLabel {
                         Button(action: model.goBack) {
                             Label("Back to page \(page)", systemImage: "arrow.uturn.backward")
                                 .font(.system(size: 12.5, weight: .semibold))

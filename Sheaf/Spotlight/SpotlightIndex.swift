@@ -30,6 +30,8 @@ nonisolated struct SpotlightHighlight: Sendable, Equatable {
     let pdfID: UUID
     let pdfTitle: String
     let pageIndex: Int
+    /// The page as printed in the PDF ("xii", "245"), else its number.
+    let pageLabel: String
     let kindName: String
     let text: String
     let note: String
@@ -54,7 +56,7 @@ nonisolated struct SpotlightHighlight: Sendable, Equatable {
 
     /// The note, if there is one, then "Question on page 4 of “Title”".
     var summary: String {
-        let place = "\(kindName) on page \(pageIndex + 1) of \u{201C}\(pdfTitle)\u{201D}"
+        let place = "\(kindName) on page \(pageLabel) of \u{201C}\(pdfTitle)\u{201D}"
         return note.isEmpty ? place : "\(note)\n\(place)"
     }
 }
@@ -68,6 +70,7 @@ extension SpotlightHighlight {
             pdfID: entry.id,
             pdfTitle: entry.title,
             pageIndex: record.pageIndex,
+            pageLabel: record.displayPage,
             kindName: record.kind.name,
             text: record.text,
             note: record.note,

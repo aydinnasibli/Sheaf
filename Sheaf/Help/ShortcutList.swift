@@ -25,6 +25,9 @@ enum ShortcutList {
     static let categories: [Category] = [
         Category(title: "Highlighting", shortcuts: [
             Shortcut("Highlight the selection, or pick a highlighter", "1 \u{2013} 4", "\u{2318}1 \u{2013} \u{2318}4"),
+            Shortcut("Write a note on the highlight just made", "\u{2325}\u{2318}N"),
+            Shortcut("Write a note on this page", "\u{2303}\u{2318}N"),
+            Shortcut("Copy as a quote, with the title and page", "\u{21E7}\u{2318}C"),
             Shortcut("Undo", "\u{2318}Z"),
             Shortcut("Redo", "\u{21E7}\u{2318}Z"),
         ]),
