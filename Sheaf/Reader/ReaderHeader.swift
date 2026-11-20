@@ -61,7 +61,7 @@ struct PenPicker: View {
                     .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(isActive ? Theme.accent : .clear, lineWidth: 2))
                 }
                 .buttonStyle(.sheaf(cornerRadius: 9))
-                .help("\(kind.name) highlighter: select text, then press \(kind.rawValue)")
+                .help("\(kind.name) highlighter: select text, then press \(kind.rawValue). Option-drag to highlight an area.")
                 .accessibilityLabel("\(kind.name) highlighter")
                 .accessibilityAddTraits(isActive ? .isSelected : [])
             }

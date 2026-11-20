@@ -50,9 +50,14 @@ struct FindBar: View {
 
     private var status: String {
         if model.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty { return "" }
-        if model.searchResults.isEmpty { return model.isSearching ? "Searching\u{2026}" : "No matches" }
-        let position = model.selectedResultID.map { "\($0 + 1) of " } ?? ""
-        return "\(position)\(model.searchResults.count)\(model.isSearching ? "+" : "")"
+        if model.searchResults.isEmpty {
+            if model.isSearching { return "Searching\u{2026}" }
+            // Scanned pages still being read may have some.
+            return model.scannedPages.progress == nil ? "No matches" : "No matches yet"
+        }
+        let position = model.selectedResultID.map { "\(($0 + 1).formatted()) of " } ?? ""
+        let more = model.isSearching || model.hasMoreResults
+        return "\(position)\(model.searchResults.count.formatted())\(more ? "+" : "")"
     }
 }
 
@@ -70,16 +75,27 @@ struct SearchResultsPanel: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.inkMuted)
             }
+            if let progress = model.scannedPages.progress {
+                Label(
+                    "Reading scanned pages (\(progress.done) of \(progress.total)), so more matches may appear.",
+                    systemImage: "text.viewfinder"
+                )
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     ForEach(model.searchResults) { result in
                         let isSelected = model.selectedResultID == result.id
+                        // Made here, so only rows that show need one.
+                        let snippet = model.snippet(for: result)
                         Button { model.selectResult(id: result.id) } label: {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Page \(result.pageLabel)")
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(Theme.inkMuted)
-                                Text(result.snippet)
+                                Text(snippet)
                                     .font(.system(size: 13))
                                     .foregroundStyle(Theme.ink)
                                     .lineLimit(2)
@@ -90,7 +106,7 @@ struct SearchResultsPanel: View {
                             .background(isSelected ? Theme.selectedRow : .clear, in: RoundedRectangle(cornerRadius: 8))
                         }
                         .buttonStyle(.sheaf())
-                        .accessibilityLabel("Page \(result.pageLabel): \(String(result.snippet.characters))")
+                        .accessibilityLabel("Page \(result.pageLabel): \(String(snippet.characters))")
                         .accessibilityAddTraits(isSelected ? .isSelected : [])
                     }
                 }
@@ -109,7 +125,8 @@ struct SearchResultsPanel: View {
 
     private var summary: String {
         let count = model.searchResults.count
-        let matches = count == 1 ? "1 match" : "\(count) matches"
+        if model.hasMoreResults { return "First \(count.formatted()) matches" }
+        let matches = count == 1 ? "1 match" : "\(count.formatted()) matches"
         return model.isSearching ? "\(matches) so far\u{2026}" : matches
     }
 }

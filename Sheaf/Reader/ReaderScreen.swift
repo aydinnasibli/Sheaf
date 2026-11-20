@@ -166,6 +166,7 @@ struct ReaderLayout: View {
             // Dark Pages may have been switched while another PDF was on screen.
             model.applyPageColors()
             model.restoreReadingPosition()
+            model.startBackgroundWork()
             model.pdfView.onEscape = { [workspace] in
                 guard workspace.isFocusMode else { return false }
                 workspace.isFocusMode = false
@@ -225,7 +226,11 @@ struct ReaderLayout: View {
                 .animation(Theme.motion, value: model.backPageNumber)
             }
             .overlay(alignment: .bottom) {
-                ZStack {
+                VStack(spacing: 8) {
+                    if let notice = model.pageNotice {
+                        PageNotice(text: notice, dismiss: model.dismissPageNotice)
+                            .transition(.opacity)
+                    }
                     if let error = model.saveError {
                         Text(error)
                             .font(.system(size: 12, weight: .medium))
@@ -235,11 +240,14 @@ struct ReaderLayout: View {
                             .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.control))
                             .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-                            .padding(.bottom, 14)
                             .transition(.opacity)
                     }
                 }
+                .padding(.horizontal, 16)
+                // Above the Back button in the corner, when it shows.
+                .padding(.bottom, model.backPageNumber == nil ? 14 : 60)
                 .animation(Theme.motion, value: model.saveError)
+                .animation(Theme.motion, value: model.pageNotice)
             }
     }
 

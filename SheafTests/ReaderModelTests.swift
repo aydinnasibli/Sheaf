@@ -34,7 +34,7 @@ struct ReaderModelTests {
         try await search(model, for: "brown")
 
         #expect(model.searchResults.count == 1)
-        #expect(model.searchResults.allSatisfy { $0.selection.string?.lowercased() == "brown" })
+        #expect(model.searchResults.allSatisfy { $0.selection?.string?.lowercased() == "brown" })
     }
 
     @Test func clearingQueryClearsResultsAndHighlights() async throws {
@@ -70,12 +70,30 @@ struct ReaderModelTests {
         let model = ReaderModel(document: TestPDF.make(pages: ["The quick brown fox"]), entry: nil, store: nil, fileURL: nil)
         try await search(model, for: "brown")
 
-        let snippet = try #require(model.searchResults.first?.snippet)
+        let snippet = model.snippet(for: try #require(model.searchResults.first))
         #expect(String(snippet.characters) == "The quick brown fox")
         let bold = snippet.runs
             .filter { $0.inlinePresentationIntent == .stronglyEmphasized }
             .map { String(snippet[$0.range].characters) }
         #expect(bold == ["brown"])
+    }
+
+    @Test func searchStopsAtTheResultLimit() async throws {
+        // 80 pages of 15 matches each (a line that fits on the page): 1,200 in all.
+        let line = Array(repeating: "fox", count: 15).joined(separator: " ")
+        let model = ReaderModel(document: TestPDF.make(pages: Array(repeating: line, count: 80)), entry: nil, store: nil, fileURL: nil)
+
+        try await search(model, for: "fox")
+
+        #expect(model.searchResults.count == ReaderModel.searchResultLimit)
+        #expect(model.hasMoreResults)
+        #expect(model.searchResults.map(\.id) == Array(0..<ReaderModel.searchResultLimit))
+        #expect(model.pdfView.highlightedSelections?.count == ReaderModel.searchResultLimit)
+
+        // A new search starts over.
+        try await search(model, for: "wolf")
+        #expect(!model.hasMoreResults)
+        #expect(model.searchResults.isEmpty)
     }
 
     @Test func goToPageIgnoresNumbersOutsideTheDocument() {

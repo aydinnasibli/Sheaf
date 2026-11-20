@@ -111,6 +111,16 @@ final class ReaderModel {
     private(set) var fileWriteBlock: FileWriteBlock?
     /// The window's undo manager, set by the reader view.
     @ObservationIgnored weak var undoManager: UndoManager?
+    /// A short note over the page, such as why text can't be selected on a
+    /// scanned page. It goes away by itself.
+    private(set) var pageNotice: String?
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
+    /// Box highlights whose words are still being read, by highlight.
+    @ObservationIgnored private var boxReadings: [UUID: Task<Void, Never>] = [:]
+
+    static let scannedPageNotice = "This page is a scanned image, so its text can\u{2019}t be selected. Drag a box to highlight an area."
+    /// The text of a box highlight when no words are found in the box.
+    static let imageAreaText = "Image area"
 
     enum FileWriteBlock {
         case passwordProtected
@@ -138,12 +148,49 @@ final class ReaderModel {
     private(set) var isSearching = false
     private(set) var selectedResultID: SearchResult.ID?
     var isShowingSearchResults: Bool { isSearchBarVisible && !normalizedQuery.isEmpty }
+    /// Searching stopped at `searchResultLimit` matches; there are more.
+    private(set) var hasMoreResults = false
+
+    /// The most matches listed. Past this, searching stops: no one reads a
+    /// thousand matches, and finding more would slow the reader down.
+    static let searchResultLimit = 1000
+
+    // MARK: Scanned pages and thumbnails
+
+    /// Pages that are scanned images, and the text read off them for search.
+    @ObservationIgnored let scannedPages = ScannedPages()
+    /// Tells this PDF's thumbnails apart from other PDFs' in the shared cache.
+    @ObservationIgnored let thumbnailCacheID = UUID()
+    @ObservationIgnored private var backgroundCopy: PageRenderer?
+
+    /// A second copy of the PDF for thumbnails and reading scanned pages
+    /// away from the main thread, made on first use.
+    var renderer: PageRenderer {
+        if let backgroundCopy { return backgroundCopy }
+        // Readers in the app always have a file; tests may not.
+        let source = fileURL.map(PageRenderer.Source.file) ?? .data(document.dataRepresentation() ?? Data())
+        let renderer = PageRenderer(source: source, expectedPageCount: pageCount)
+        backgroundCopy = renderer
+        return renderer
+    }
 
     // MARK: Private
 
     @ObservationIgnored private var hasRestoredPosition = false
     @ObservationIgnored private var activeQuery = ""
     @ObservationIgnored private var seenMatches = Set<MatchKey>()
+    /// Text matches PDFKit has reported, in document order.
+    @ObservationIgnored private var textMatches: [FoundMatch] = []
+    /// Text matches not yet listed: they're shown a batch at a time.
+    @ObservationIgnored private var pendingMatches: [FoundMatch] = []
+    /// Matches in text read off scanned pages, by page.
+    @ObservationIgnored private var recognizedMatches: [Int: [FoundMatch]] = [:]
+    /// The last page PDFKit has searched. Matches on scanned pages after it
+    /// wait, so the list fills in document order.
+    @ObservationIgnored private var searchedThroughPage = -1
+    @ObservationIgnored private var lastResultsUpdate = ContinuousClock.now
+    /// Snippets made so far; each is made when its row first shows.
+    @ObservationIgnored private var snippets: [MatchKey: AttributedString] = [:]
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
     @ObservationIgnored private var saveChain: Task<Void, Never>?
     @ObservationIgnored private var hasUnsavedChanges = false
@@ -221,6 +268,7 @@ final class ReaderModel {
 
     /// Call when the PDF is closed.
     func close() {
+        stopBackgroundWork()
         document.cancelFindString()
         flushPendingSave()
         undoManager?.removeAllActions(withTarget: self)
@@ -512,6 +560,7 @@ final class ReaderModel {
             activePen = kind
         } else {
             activePen = activePen == kind ? nil : kind
+            explainIfScanned()
         }
     }
 
@@ -545,6 +594,89 @@ final class ReaderModel {
         scheduleSave()
         registerUndo("Highlight") { $0.removeHighlights(created, actionName: "Highlight") }
         return true
+    }
+
+    /// Highlights a box on a page: an area of a scanned page, or whatever
+    /// was boxed with Option-drag. On a page without text, the words in the
+    /// box are read off the picture afterwards; the returned task finishes
+    /// then. Until (or unless) words are found, the text is "Image area".
+    @discardableResult
+    func highlightBox(_ rect: CGRect, onPage index: Int, as kind: HighlightKind) -> Task<Void, Never>? {
+        guard let entry, let store, let page = document.page(at: index) else { return nil }
+        let box = rect.intersection(page.bounds(for: .cropBox))
+        guard !box.isNull, box.width > 0.5, box.height > 0.5 else { return nil }
+
+        // A page with real text already knows the words in the box.
+        let hasText = scannedPages.pageHasText(page, at: index)
+        let selected = hasText ? page.selection(for: box)?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" : ""
+        let text = selected.isEmpty ? Self.imageAreaText : selected.components(separatedBy: .newlines).joined(separator: " ")
+        let record = store.addHighlight(to: entry, pageIndex: index, kind: kind, text: text, rects: [box])
+        PDFHighlights.add(record, to: document)
+        pdfView.clearSelection()
+        refreshHighlights()
+        scheduleSave()
+        // Undo takes the highlight as it is by then, with the words read from the box.
+        let id = record.id
+        registerUndo("Highlight") { model in
+            if let record = model.highlight(id: id) {
+                model.removeHighlights([HighlightSnapshot(record)], actionName: "Highlight")
+            }
+        }
+        guard selected.isEmpty else { return nil }
+
+        let reading = Task { [weak self] in
+            guard let self else { return }
+            defer { boxReadings[id] = nil }
+            // From the background copy, without highlights in the way; a PDF
+            // with a password only has the copy on screen.
+            let image: PageImage?
+            if let copy = await renderer.imageForReading(page: index, region: box) {
+                image = copy
+            } else {
+                image = Task.isCancelled ? nil : PageImage.forReading(page, region: box)
+            }
+            guard let image else { return }
+            let words = await TextRecognizer.lines(in: image).map(\.text).joined(separator: " ")
+            // Closed meanwhile: the highlight keeps "Image area".
+            guard !Task.isCancelled, !words.isEmpty, let record = highlight(id: id) else { return }
+            record.text = words
+            store.save()
+            refreshHighlights()
+        }
+        boxReadings[id] = reading
+        return reading
+    }
+
+    /// Stops reading scanned pages and boxes (the PDF was closed).
+    func stopBackgroundWork() {
+        scannedPages.cancel()
+        for reading in boxReadings.values { reading.cancel() }
+        boxReadings = [:]
+    }
+
+    /// Shows a note over the page for a few seconds.
+    func showPageNotice(_ text: String) {
+        pageNotice = text
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            self?.pageNotice = nil
+        }
+    }
+
+    func dismissPageNotice() {
+        noticeTask?.cancel()
+        pageNotice = nil
+    }
+
+    /// With a highlighter picked on a scanned page, says why selecting text
+    /// won't work there and what to do instead.
+    private func explainIfScanned() {
+        guard activePen != nil, let page = pdfView.currentPage,
+              !scannedPages.pageHasText(page, at: document.index(for: page))
+        else { return }
+        showPageNotice(Self.scannedPageNotice)
     }
 
     func setNote(_ note: String, for record: HighlightRecord) {
@@ -681,6 +813,7 @@ final class ReaderModel {
     private func highlightKeyPressed(_ kind: HighlightKind) -> Bool {
         if !highlightSelection(as: kind) {
             activePen = activePen == kind ? nil : kind
+            explainIfScanned()
         }
         return true
     }
@@ -811,7 +944,9 @@ final class ReaderModel {
     // MARK: Search
 
     /// Starts a new search for `searchQuery`, replacing any search in progress.
-    /// Results arrive a page at a time, so long documents stay responsive.
+    /// PDFKit searches in the background and its matches are listed a batch
+    /// at a time, so long documents stay responsive. Matches in text read off
+    /// scanned pages join them in document order.
     func search() {
         let query = normalizedQuery
         guard query != activeQuery else { return }
@@ -819,15 +954,26 @@ final class ReaderModel {
         document.cancelFindString()
         activeQuery = query
         searchResults = []
+        textMatches = []
+        pendingMatches = []
+        recognizedMatches = [:]
         seenMatches = []
+        snippets = [:]
+        searchedThroughPage = -1
         selectedResultID = nil
+        hasMoreResults = false
         pdfView.highlightedSelections = nil
+        markRecognizedMatches()
 
         guard !query.isEmpty else {
             isSearching = false
             return
         }
         isSearching = true
+        for page in scannedPages.recognized.values {
+            addRecognizedMatches(on: page)
+        }
+        lastResultsUpdate = .now
         document.beginFindString(query, withOptions: [.caseInsensitive])
     }
 
@@ -843,8 +989,17 @@ final class ReaderModel {
         if selectedResultID == nil { rememberPlace() }
         let result = searchResults[id]
         selectedResultID = id
-        pdfView.setCurrentSelection(result.selection, animate: true)
-        pdfView.go(to: result.selection)
+        switch result.match {
+        case .text(let selection):
+            pdfView.setCurrentSelection(selection, animate: true)
+            pdfView.go(to: selection)
+        case .recognized(let rect, _):
+            pdfView.clearSelection()
+            if let page = document.page(at: result.pageIndex) {
+                pdfView.go(to: rect.insetBy(dx: 0, dy: -40), on: page)
+            }
+        }
+        markRecognizedMatches()
     }
 
     func selectNextResult() {
@@ -858,6 +1013,30 @@ final class ReaderModel {
         let count = searchResults.count
         let previous = selectedResultID.map { ($0 - 1 + count) % count } ?? count - 1
         selectResult(id: previous)
+    }
+
+    /// The line of text around a match, with the match in bold. Made when
+    /// the match's row first shows, since finding the line takes a moment.
+    func snippet(for result: SearchResult) -> AttributedString {
+        if let made = snippets[result.key] { return made }
+        let text: String
+        switch result.match {
+        case .text(let selection): text = Self.line(around: selection)
+        case .recognized(_, let line): text = line
+        }
+        var snippet = AttributedString(text)
+        if let range = snippet.range(of: activeQuery, options: .caseInsensitive) {
+            snippet[range].inlinePresentationIntent = .stronglyEmphasized
+        }
+        snippets[result.key] = snippet
+        return snippet
+    }
+
+    /// Text read off a scanned page arrived: its matches join the results.
+    func recognizedPageArrived(_ page: RecognizedPage) {
+        guard !activeQuery.isEmpty, addRecognizedMatches(on: page) else { return }
+        // While PDFKit is still searching, they're listed with its next batch.
+        if !isSearching { showSearchResults() }
     }
 
     private var normalizedQuery: String {
@@ -874,36 +1053,113 @@ final class ReaderModel {
         else { return }
 
         let pageIndex = document.index(for: page)
-        guard seenMatches.insert(MatchKey(pageIndex: pageIndex, bounds: selection.bounds(for: page))).inserted else { return }
+        let key = MatchKey(pageIndex: pageIndex, bounds: selection.bounds(for: page))
+        guard seenMatches.insert(key).inserted else { return }
 
         selection.color = .findHighlightColor
-        searchResults.append(SearchResult(
-            id: searchResults.count,
-            selection: selection,
-            pageLabel: page.label ?? String(pageIndex + 1),
-            snippet: Self.snippet(around: selection, query: activeQuery)
+        pendingMatches.append(FoundMatch(
+            key: key, pageIndex: pageIndex, pageLabel: page.label ?? String(pageIndex + 1), match: .text(selection)
         ))
     }
 
-    private func refreshSearchHighlights() {
-        if pdfView.highlightedSelections?.count != searchResults.count {
-            pdfView.highlightedSelections = searchResults.map(\.selection)
-        }
+    /// PDFKit finished searching a page. New matches are listed, but no more
+    /// than a few times a second: each update redraws the list and the page.
+    private func didSearchPage(_ index: Int?) {
+        guard !activeQuery.isEmpty else { return }
+        if let index { searchedThroughPage = max(searchedThroughPage, index) }
+        let hasNews = !pendingMatches.isEmpty || index.map { recognizedMatches[$0] != nil } ?? false
+        guard hasNews, searchResults.isEmpty || ContinuousClock.now - lastResultsUpdate > .milliseconds(250) else { return }
+        showSearchResults()
     }
 
-    /// The line of text around a match, with the match in bold.
-    private static func snippet(around selection: PDFSelection, query: String) -> AttributedString {
-        guard let line = selection.copy() as? PDFSelection else { return AttributedString(selection.string ?? "") }
+    private func didFinishSearching() {
+        isSearching = document.isFinding
+        guard !isSearching, !activeQuery.isEmpty else { return }
+        searchedThroughPage = pageCount
+        showSearchResults()
+    }
+
+    /// Finds the query in a scanned page's text. Returns whether it's there.
+    @discardableResult
+    private func addRecognizedMatches(on page: RecognizedPage) -> Bool {
+        let label = document.page(at: page.index)?.label ?? String(page.index + 1)
+        let found = page.matches(of: activeQuery).map { match in
+            FoundMatch(
+                key: MatchKey(pageIndex: page.index, bounds: match.rect), pageIndex: page.index,
+                pageLabel: label, match: .recognized(match.rect, line: match.line)
+            )
+        }
+        recognizedMatches[page.index] = found.isEmpty ? nil : found
+        return !found.isEmpty
+    }
+
+    /// Lists the matches found so far in document order, up to the limit.
+    private func showSearchResults() {
+        textMatches += pendingMatches
+        pendingMatches = []
+        lastResultsUpdate = .now
+        let selectedKey = selectedResultID.flatMap { searchResults.indices.contains($0) ? searchResults[$0].key : nil }
+
+        // Matches on scanned pages slot in between PDFKit's, by page, once
+        // PDFKit has searched that far.
+        let scanned = recognizedMatches.keys
+            .filter { $0 <= searchedThroughPage }
+            .sorted()
+            .flatMap { recognizedMatches[$0] ?? [] }
+        var merged: [FoundMatch] = []
+        merged.reserveCapacity(min(textMatches.count + scanned.count, Self.searchResultLimit + 1))
+        var nextText = 0, nextScanned = 0
+        while merged.count <= Self.searchResultLimit, nextText < textMatches.count || nextScanned < scanned.count {
+            if nextScanned == scanned.count
+                || (nextText < textMatches.count && textMatches[nextText].pageIndex <= scanned[nextScanned].pageIndex) {
+                merged.append(textMatches[nextText])
+                nextText += 1
+            } else {
+                merged.append(scanned[nextScanned])
+                nextScanned += 1
+            }
+        }
+        if merged.count > Self.searchResultLimit {
+            merged.removeLast(merged.count - Self.searchResultLimit)
+            hasMoreResults = true
+            if isSearching {
+                document.cancelFindString()
+                isSearching = false
+            }
+        }
+
+        searchResults = merged.enumerated().map { position, found in
+            SearchResult(id: position, key: found.key, pageIndex: found.pageIndex, pageLabel: found.pageLabel, match: found.match)
+        }
+        selectedResultID = selectedKey.flatMap { key in searchResults.firstIndex { $0.key == key } }
+        let selections = searchResults.compactMap(\.selection)
+        pdfView.highlightedSelections = selections.isEmpty ? nil : selections
+        markRecognizedMatches()
+    }
+
+    /// Marks the listed matches on scanned pages, which PDFKit can't highlight.
+    private func markRecognizedMatches() {
+        var marks: [Int: [CGRect]] = [:]
+        for result in searchResults {
+            if case .recognized(let rect, _) = result.match {
+                marks[result.pageIndex, default: []].append(rect)
+            }
+        }
+        var selected: (page: Int, rect: CGRect)?
+        if let id = selectedResultID, searchResults.indices.contains(id), case .recognized(let rect, _) = searchResults[id].match {
+            selected = (page: searchResults[id].pageIndex, rect: rect)
+        }
+        pdfView.recognizedMatches.show(marks, selected: selected)
+    }
+
+    /// The line of text around a match, joined into one line.
+    private static func line(around selection: PDFSelection) -> String {
+        guard let line = selection.copy() as? PDFSelection else { return selection.string ?? "" }
         line.extendForLineBoundaries()
-        let text = (line.string ?? "")
+        return (line.string ?? "")
             .components(separatedBy: .newlines)
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
-        var snippet = AttributedString(text)
-        if let range = snippet.range(of: query, options: .caseInsensitive) {
-            snippet[range].inlinePresentationIntent = .stronglyEmphasized
-        }
-        return snippet
     }
 
     // MARK: Notifications
@@ -948,15 +1204,12 @@ final class ReaderModel {
                     if let selection { self?.didFind(selection) }
                 }
             },
-            center.addObserver(forName: .PDFDocumentDidEndPageFind, object: document, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshSearchHighlights() }
+            center.addObserver(forName: .PDFDocumentDidEndPageFind, object: document, queue: .main) { [weak self] notification in
+                let page = (notification.userInfo?["PDFDocumentPageIndex"] as? NSNumber)?.intValue
+                MainActor.assumeIsolated { self?.didSearchPage(page) }
             },
             center.addObserver(forName: .PDFDocumentDidEndFind, object: document, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.isSearching = self.document.isFinding
-                    self.refreshSearchHighlights()
-                }
+                MainActor.assumeIsolated { self?.didFinishSearching() }
             },
             center.addObserver(forName: .sheafFlushSaves, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.flushPendingSave() }
@@ -967,11 +1220,34 @@ final class ReaderModel {
 
 /// One match in the search results list.
 struct SearchResult: Identifiable {
+    enum Match {
+        /// Text PDFKit found.
+        case text(PDFSelection)
+        /// Words read off a scanned page: where they are, in page
+        /// coordinates, and the line they're in.
+        case recognized(CGRect, line: String)
+    }
+
     /// Position in the results list, which is also document order.
     let id: Int
-    let selection: PDFSelection
+    let key: MatchKey
+    let pageIndex: Int
     let pageLabel: String
-    let snippet: AttributedString
+    let match: Match
+
+    /// The text PDFKit found, for matches in real text.
+    var selection: PDFSelection? {
+        if case .text(let selection) = match { return selection }
+        return nil
+    }
+}
+
+/// A match found but not yet listed.
+private struct FoundMatch {
+    let key: MatchKey
+    let pageIndex: Int
+    let pageLabel: String
+    let match: SearchResult.Match
 }
 
 struct MatchKey: Hashable {

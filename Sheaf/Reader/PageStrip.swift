@@ -110,8 +110,8 @@ struct ThumbnailList: View {
                 LazyVStack(spacing: 18) {
                     ForEach(0..<model.pageCount, id: \.self) { index in
                         ThumbnailCell(
-                            page: model.document.page(at: index),
-                            number: index + 1,
+                            model: model,
+                            index: index,
                             isCurrent: isCurrent(index),
                             isBookmarked: model.bookmarks.contains(index),
                             markers: model.markers(onPage: index)
@@ -149,34 +149,37 @@ private extension View {
     }
 }
 
+/// One page in the strip. Thumbnails are drawn in the background and kept
+/// in `ThumbnailCache`, so scrolling stays smooth.
 struct ThumbnailCell: View {
-    let page: PDFPage?
-    let number: Int
+    let model: ReaderModel
+    let index: Int
     let isCurrent: Bool
     var isBookmarked = false
     let markers: [(position: Double, kind: HighlightKind)]
     let action: () -> Void
 
+    /// The last thumbnail drawn for this cell; shown until a new one is
+    /// ready (after a highlight, say), so the page never flashes blank.
     @State private var image: NSImage?
     @State private var isHovered = false
     @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
     @Environment(\.colorScheme) private var colorScheme
 
+    private var number: Int { index + 1 }
+
     /// Thumbnails follow Dark Pages, like the page itself.
     private var isDarkPage: Bool { darkPages && colorScheme == .dark }
 
-    private var size: CGSize {
-        guard let bounds = page?.bounds(for: .cropBox), bounds.width > 0 else { return CGSize(width: 108, height: 140) }
-        let width: CGFloat = 108
-        return CGSize(width: width, height: min(160, width * bounds.height / bounds.width))
-    }
-
     var body: some View {
+        let key = model.thumbnailKey(forPage: index)
+        let size = model.thumbnailSize(forPage: index)
+        let shown = ThumbnailCache.image(for: key) ?? image
         Button(action: action) {
             VStack(spacing: 6) {
                 ZStack {
-                    if let image {
-                        Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                    if let shown {
+                        Image(nsImage: shown).resizable().aspectRatio(contentMode: .fit)
                     } else {
                         Color.white
                     }
@@ -222,8 +225,9 @@ struct ThumbnailCell: View {
         .buttonStyle(.sheaf(.quiet, in: Rectangle()))
         .onHover { isHovered = $0 }
         .accessibilityLabel(isBookmarked ? "Page \(number), bookmarked" : "Page \(number)")
-        .task {
-            image = page?.thumbnail(of: CGSize(width: 216, height: 320), for: .cropBox)
+        .task(id: key) {
+            // Cancelled if the row scrolls away first, so it's never drawn.
+            if let drawn = await model.thumbnail(forPage: index) { image = drawn }
         }
     }
 }
