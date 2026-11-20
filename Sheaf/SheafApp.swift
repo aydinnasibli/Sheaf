@@ -29,6 +29,8 @@ struct SheafApp: App {
         let workspace = Workspace(library: library)
         if !Self.isRunningTests {
             workspace.restore()
+            // Read PDFs' text in the background, so the library's search finds words inside them.
+            TextIndexer.shared.start(library: library)
         }
         _library = State(initialValue: library)
         _workspace = State(initialValue: workspace)

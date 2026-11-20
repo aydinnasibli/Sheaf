@@ -8,10 +8,14 @@ enum LibraryScope: Hashable {
     case starred
     case highlights
     case notes
+    /// Flashcards from highlights.
+    case review
     case collection(UUID)
 
     /// Highlights and Notes show highlights rather than PDFs.
     var showsHighlights: Bool { self == .highlights || self == .notes }
+    /// The list of PDFs, with search, filters and recent highlights.
+    var showsPDFs: Bool { !showsHighlights && self != .review }
 }
 
 /// The filter chips above the list.
@@ -54,7 +58,6 @@ struct LibraryScreen: View {
     @Query(LibraryScreen.recentHighlightsQuery) private var recentHighlights: [HighlightRecord]
     @Query(sort: \HighlightRecord.createdAt, order: .reverse) private var allHighlights: [HighlightRecord]
 
-    @State private var scope = LibraryScope.all
     @State private var filter = LibraryFilter.all
     @State private var highlightKinds = Set<HighlightKind>()
     @State private var searchText = ""
@@ -64,7 +67,13 @@ struct LibraryScreen: View {
     @State private var missingEntry: LibraryEntry?
     @State private var isDropTargeted = false
     @State private var width: CGFloat = 1280
+    /// Finds PDFs whose text contains the search.
+    @State private var textSearch = LibraryTextSearch()
     @FocusState private var isSearchFocused: Bool
+
+    /// The section shown, chosen in the left panel. The workspace keeps it,
+    /// so the library comes back to it after reading a PDF.
+    private var scope: LibraryScope { workspace.libraryScope }
 
     static var recentHighlightsQuery: FetchDescriptor<HighlightRecord> {
         var descriptor = FetchDescriptor<HighlightRecord>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
@@ -76,7 +85,7 @@ struct LibraryScreen: View {
         HStack(spacing: 0) {
             if width >= 820 {
                 LibrarySidebar(
-                    scope: $scope,
+                    scope: Bindable(workspace).libraryScope,
                     highlightKinds: $highlightKinds,
                     entries: entries,
                     collections: collections,
@@ -85,7 +94,9 @@ struct LibraryScreen: View {
                 .frame(width: 216)
                 Hairline(axis: .vertical)
             }
-            if scope.showsHighlights {
+            if scope == .review {
+                ReviewPage(highlights: allHighlights, entries: entries, collections: collections)
+            } else if scope.showsHighlights {
                 HighlightsPage(
                     title: scope == .notes ? "Notes" : "Highlights",
                     records: allHighlights.filter { scope != .notes || !$0.note.isEmpty },
@@ -97,7 +108,7 @@ struct LibraryScreen: View {
             } else {
                 main
             }
-            if width >= 1100 && !scope.showsHighlights {
+            if width >= 1100 && scope.showsPDFs {
                 Hairline(axis: .vertical)
                 RecentHighlightsPanel(records: recentHighlights) { record in
                     if let entry = record.entry { WindowRouter.shared.open(entry, at: record) }
@@ -112,6 +123,15 @@ struct LibraryScreen: View {
         .toolbar { header }
         .sheafHeader()
         .onChange(of: workspace.librarySearchRequest) { isSearchFocused = true }
+        .onChange(of: searchText) {
+            // Review has nothing to search; searching shows the library.
+            if scope == .review && !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                workspace.libraryScope = .all
+            }
+        }
+        .task(id: textSearchKey) {
+            await textSearch.run(textSearchKey.query, in: scope.showsPDFs ? entries.filter { isInScope($0) && filter.matches($0) } : [])
+        }
         .alert(
             "Can\u{2019}t Find \u{201C}\(missingEntry?.title ?? "")\u{201D}",
             isPresented: Binding(get: { missingEntry != nil }, set: { if !$0 { missingEntry = nil } }),
@@ -174,19 +194,34 @@ struct LibraryScreen: View {
 
             if entries.isEmpty {
                 EmptyLibrary()
-            } else if rows.isEmpty {
-                noRows
-            } else {
+            } else if rows.isEmpty && textMatches.isEmpty {
+                // Nothing yet while the PDFs' text is still being searched.
+                if !textSearch.isSearching(textSearchKey.query) { noRows }
+            } else if textMatches.isEmpty {
                 list
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
+                    if !rows.isEmpty {
+                        // Matches in titles, highlights and notes come first.
+                        list.frame(maxHeight: TextMatchesSection.listHeight(rows: rows.count))
+                    }
+                    TextMatchesSection(matches: textMatches, entries: entries, query: textSearchKey.query) { entry, page in
+                        open(entry, atPage: page)
+                    }
+                }
             }
         }
         .padding(.horizontal, 32)
         .padding(.top, 26)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .dropDestination(for: URL.self) { urls, _ in
-            let pdfs = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .pdf) ?? false }
-            library.add(urls: pdfs)
-            return !pdfs.isEmpty
+            let files = urls.filter { LibraryStore.isPDF($0) || LibraryStore.isFolder($0) }
+            guard !files.isEmpty else { return false }
+            // Dropped on a collection, PDFs join it; dropped on Starred, they're starred.
+            let collection = shownCollection
+            let starred = scope == .starred
+            Task { _ = await library.addFiles(files, to: collection, starred: starred) }
+            return true
         } isTargeted: { isDropTargeted = $0 }
         .overlay {
             if isDropTargeted {
@@ -314,12 +349,7 @@ struct LibraryScreen: View {
     private var rows: [LibraryEntry] {
         let query = searchText.trimmingCharacters(in: .whitespaces)
         let shown = entries.filter { entry in
-            let inScope = switch scope {
-            case .all, .highlights, .notes: true
-            case .starred: entry.isStarred
-            case .collection(let id): entry.collection?.id == id
-            }
-            guard inScope, filter.matches(entry) else { return false }
+            guard isInScope(entry), filter.matches(entry) else { return false }
             guard !query.isEmpty else { return true }
             return entry.title.localizedStandardContains(query)
                 || entry.highlights.contains { $0.text.localizedStandardContains(query) || $0.note.localizedStandardContains(query) }
@@ -336,12 +366,34 @@ struct LibraryScreen: View {
         return sortAscending ? sorted : sorted.reversed()
     }
 
+    private func isInScope(_ entry: LibraryEntry) -> Bool {
+        switch scope {
+        case .all, .highlights, .notes, .review: true
+        case .starred: entry.isStarred
+        case .collection(let id): entry.collection?.id == id
+        }
+    }
+
+    /// The collection on screen, if the library is showing one.
+    private var shownCollection: PDFCollection? {
+        guard case .collection(let id) = scope else { return nil }
+        return collections.first { $0.id == id }
+    }
+
+    /// Runs the search of PDFs' text again when the search, section or filter changes.
+    private var textSearchKey: TextSearchKey {
+        TextSearchKey(query: searchText.trimmingCharacters(in: .whitespaces), scope: scope, filter: filter)
+    }
+
+    private var textMatches: [TextIndex.Match] { textSearch.matches(for: textSearchKey.query) }
+
     private var scopeTitle: String {
         switch scope {
         case .all: "Library"
         case .starred: "Starred"
         case .highlights: "Highlights"
         case .notes: "Notes"
+        case .review: "Review"
         case .collection(let id): collections.first { $0.id == id }?.name ?? "Library"
         }
     }
@@ -352,6 +404,14 @@ struct LibraryScreen: View {
         let current = selection.flatMap { ids.firstIndex(of: $0) } ?? (offset > 0 ? -1 : ids.count)
         selection = ids[min(max(current + offset, 0), ids.count - 1)]
         return .handled
+    }
+
+    private func open(_ entry: LibraryEntry, atPage pageIndex: Int) {
+        guard library.resolveFile(for: entry) != nil else {
+            missingEntry = entry
+            return
+        }
+        WindowRouter.shared.open(entry, atPage: pageIndex)
     }
 
     private func open(_ selected: [LibraryEntry]) {

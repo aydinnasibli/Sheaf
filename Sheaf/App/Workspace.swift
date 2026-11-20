@@ -18,6 +18,11 @@ final class Workspace {
     /// Focus mode: only the page, full screen, with the side panels hidden.
     /// Going back to the library ends it.
     var isFocusMode = false
+    /// What the library shows, chosen in its left panel. Kept here so the
+    /// library comes back to it after reading a PDF.
+    var libraryScope = LibraryScope.all
+    /// The review in progress, kept while a PDF is open so it can go on after.
+    var review: ReviewDeck?
 
     @ObservationIgnored private let library: LibraryStore
     @ObservationIgnored private let preferences: UserDefaults
@@ -48,6 +53,12 @@ final class Workspace {
         }
         selectedID = document.id
         persist()
+    }
+
+    /// Opens a PDF at a page (0-based), as when clicking a search match.
+    func open(_ entry: LibraryEntry, atPage pageIndex: Int) {
+        open(entry)
+        selectedDocument?.pendingPageIndex = pageIndex
     }
 
     func showLibrary() {

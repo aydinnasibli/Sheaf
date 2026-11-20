@@ -56,11 +56,12 @@ struct ReaderScreen: View {
             }
         }
         .sheafHeader()
-        // PDFs dropped from Finder open here (and join the library).
+        // PDFs dropped from Finder open here (and join the library); the PDFs
+        // in dropped folders join the library.
         .dropDestination(for: URL.self) { urls, _ in
-            let pdfs = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .pdf) ?? false }
-            guard !pdfs.isEmpty else { return false }
-            WindowRouter.shared.open(urls: pdfs)
+            let files = urls.filter { LibraryStore.isPDF($0) || LibraryStore.isFolder($0) }
+            guard !files.isEmpty else { return false }
+            WindowRouter.shared.open(urls: files)
             return true
         } isTargeted: { isDropTargeted = $0 }
         .overlay {
@@ -175,6 +176,13 @@ struct ReaderLayout: View {
             await Task.yield()
             if let record = model.highlight(id: id) { model.go(to: record) }
             document.pendingHighlightID = nil
+        }
+        .task(id: document.pendingPageIndex) {
+            // Opened from a search match in the library: go to its page.
+            guard let index = document.pendingPageIndex else { return }
+            await Task.yield()
+            model.goToPage(number: index + 1)
+            document.pendingPageIndex = nil
         }
         .onDisappear { model.suspend() }
     }

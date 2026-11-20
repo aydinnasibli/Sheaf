@@ -161,6 +161,11 @@ struct SheafCommands: Commands {
         CommandMenu("Go") {
             Button("Library") { WindowRouter.shared.showLibrary() }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+            Button("Review Highlights") {
+                workspace.libraryScope = .review
+                WindowRouter.shared.showLibrary()
+            }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
             // ⇧⌘] and ⇧⌘[ like Safari's tabs; Control-Tab also works (see AppDelegate).
             Button("Next Open PDF") { workspace.selectNext() }
                 .keyboardShortcut("]", modifiers: [.command, .shift])

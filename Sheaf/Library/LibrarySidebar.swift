@@ -34,6 +34,10 @@ struct LibrarySidebar: View {
                         scope = .notes
                         highlightKinds = []
                     }
+                    NavRow(title: "Review", count: nil, isSelected: scope == .review) {
+                        Image(systemName: "rectangle.on.rectangle.angled")
+                    } action: { scope = .review }
+                    .help("Flashcards from your highlights (\u{21E7}\u{2318}R)")
                     NavRow(title: "Starred", count: entries.count(where: \.isStarred), isSelected: scope == .starred) {
                         Image(systemName: "star")
                     } action: { scope = .starred }
@@ -200,7 +204,8 @@ struct OpenDocumentRow: View {
 
 struct NavRow<Icon: View>: View {
     let title: String
-    let count: Int
+    /// Shown on the right; `nil` for rows that don't count anything.
+    let count: Int?
     let isSelected: Bool
     @ViewBuilder var icon: Icon
     let action: () -> Void
@@ -211,9 +216,11 @@ struct NavRow<Icon: View>: View {
                 icon.frame(width: 16)
                 Text(title).lineLimit(1)
                 Spacer(minLength: 4)
-                Text(String(count))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.inkMuted)
+                if let count {
+                    Text(String(count))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.inkMuted)
+                }
             }
             .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
             .foregroundStyle(isSelected ? Theme.ink : Theme.inkSecondary)
@@ -224,7 +231,7 @@ struct NavRow<Icon: View>: View {
         }
         .buttonStyle(.sheaf())
         .accessibilityLabel(title)
-        .accessibilityValue(String(count))
+        .accessibilityValue(count.map(String.init) ?? "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

@@ -8,7 +8,12 @@ every PDF you read.
 ## Features
 
 - **Library** of every PDF you open: files stay where they are on your Mac;
-  collections, starring, reading progress, search across titles, highlights and notes
+  collections, starring, reading progress, search across titles, highlights and notes,
+  and the full text of every PDF (indexed in the background, shown with the page and
+  the words around each match). Drop PDFs or whole folders to add them; dropped on a
+  collection, they join it
+- **Review**: flashcards from your highlights (Definitions to start with). The front
+  shows your note, or the PDF and page; Space shows the highlight; 1 Again, 2 Got it
 - **Reader** with page thumbnails, table of contents, single / two-page / scroll layouts,
   zoom, search, and your place remembered
 - **Highlighting** with keys 1–4 or the toolbar, notes on each highlight, undo,
@@ -73,7 +78,9 @@ Sheaf/
 ├── Info.plist          Document types (PDF) and app settings
 ├── Sheaf.entitlements  Sandbox permissions
 ├── App/                Window, workspace of open PDFs, menu commands, app delegate, updater
-├── Library/            Library screen: sidebar, PDF list, Highlights page, recent highlights
+├── Library/            Library screen: sidebar, PDF list, Highlights page, text matches, recent highlights
+├── Review/             Flashcards from highlights: the deck and the Review page
+├── Search/             The text index of every PDF, kept up to date in the background
 ├── Reader/             Reader screen: header, page strip, highlights panel, search, model
 ├── Highlights/         Writing highlights into PDF files (in the background)
 ├── Data/               SwiftData models (PDFs, collections, highlights) and the library store

@@ -19,6 +19,8 @@ final class OpenDocument: Identifiable {
     private(set) var phase = Phase.loading
     /// A highlight to scroll to once the reader is on screen.
     var pendingHighlightID: UUID?
+    /// A page (0-based) to go to once the reader is on screen.
+    var pendingPageIndex: Int?
 
     @ObservationIgnored let entry: LibraryEntry
     @ObservationIgnored private let library: LibraryStore
