@@ -112,11 +112,17 @@ struct LibraryMigrationTests {
         #expect(record.note == "Compare with RNNs")
         #expect(record.pageLabel.isEmpty)
         #expect(record.displayPage == "5")
+        // Its questions are open until answered.
+        #expect(!record.isAnswered)
+        #expect(record.answer.isEmpty)
+        #expect(entry.openQuestionCount == 1)
 
         // New things can be added to it.
         let store = LibraryStore(context: new.mainContext)
         store.addPageNote(to: entry, pageIndex: 2, text: "The diagram")
         store.setSummary("About attention", for: entry)
+        store.setAnswer("Attention replaces recurrence", isAnswered: true, for: record)
         #expect(entry.pageNotes.map(\.text) == ["The diagram"])
+        #expect(entry.openQuestionCount == 0)
     }
 }

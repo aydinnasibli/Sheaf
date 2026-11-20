@@ -13,6 +13,9 @@ nonisolated struct HighlightSnapshot: Sendable {
     let createdAt: Date
     /// The highlight color on the page, as 0xRRGGBB.
     let colorHex: UInt32
+    /// A Question's answer, so Undo brings it back. Never written into the PDF.
+    var isAnswered = false
+    var answer = ""
 }
 
 extension HighlightSnapshot {
@@ -25,7 +28,9 @@ extension HighlightSnapshot {
             note: record.note,
             rects: record.rects,
             createdAt: record.createdAt,
-            colorHex: record.kind.pageColorHex
+            colorHex: record.kind.pageColorHex,
+            isAnswered: record.isAnswered,
+            answer: record.answer
         )
     }
 }

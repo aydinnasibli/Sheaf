@@ -76,6 +76,19 @@ struct SheafCommands: Commands {
             )
         }
 
+        // File > Export as Markdown…: the PDF on screen's summary, highlights
+        // and notes, or what the library's Highlights or Notes page shows.
+        CommandGroup(replacing: .importExport) {
+            Button("Export as Markdown\u{2026}") {
+                if let reader {
+                    reader.exportMarkdown()
+                } else {
+                    NotificationCenter.default.post(name: .sheafExportShownHighlights, object: nil)
+                }
+            }
+            .disabled(reader == nil && !(workspace.isShowingLibrary && workspace.libraryScope.showsHighlights))
+        }
+
         // File > Print, with or without highlights.
         CommandGroup(replacing: .printItem) {
             Button("Print\u{2026}") { reader?.printPDF(includingHighlights: true) }

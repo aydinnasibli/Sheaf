@@ -100,8 +100,13 @@ final class LibraryEntry {
         HighlightKind.allCases.map { kind in highlights.count { $0.kindRaw == kind.rawValue } }
     }
 
+    /// Questions not answered yet. Answering one takes it off the count.
+    var openQuestionCount: Int {
+        highlights.count(where: \.isOpenQuestion)
+    }
+
     var hasOpenQuestions: Bool {
-        highlights.contains { $0.kindRaw == HighlightKind.question.rawValue }
+        highlights.contains(where: \.isOpenQuestion)
     }
 }
 

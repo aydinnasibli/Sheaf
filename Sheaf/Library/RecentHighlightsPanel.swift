@@ -34,7 +34,7 @@ struct RecentHighlightsPanel: View {
 
     private func card(_ record: HighlightRecord) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(record.kind.name.uppercased())
+            Text(record.isAnsweredQuestion ? "\(record.kind.name.uppercased()) \u{00B7} ANSWERED" : record.kind.name.uppercased())
                 .font(.system(size: 11, weight: .bold))
                 .tracking(0.4)
                 .foregroundStyle(record.kind.chipText)

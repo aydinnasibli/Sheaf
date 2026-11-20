@@ -95,6 +95,8 @@ extension LibraryStore {
                 )
                 record.id = snapshot.id
                 record.note = snapshot.note
+                record.isAnswered = snapshot.isAnswered
+                record.answer = snapshot.answer
                 context.insert(record)
                 record.entry = entry
                 highlights.append(record)

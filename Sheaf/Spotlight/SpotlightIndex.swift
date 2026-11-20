@@ -36,10 +36,13 @@ nonisolated struct SpotlightHighlight: Sendable, Equatable {
     let text: String
     let note: String
     let createdAt: Date
+    /// An answered Question's answer ("" when she wrote none); `nil` for
+    /// open questions and other colors.
+    var answer: String?
 
     /// The Spotlight result: the highlighted text as the title, then the
-    /// note and where it is. Grouped by PDF, so removing a PDF removes its
-    /// highlights in one go.
+    /// note, the answer and where it is. Grouped by PDF, so removing a PDF
+    /// removes its highlights in one go.
     func searchableItem() -> CSSearchableItem {
         let attributes = CSSearchableItemAttributeSet(contentType: .text)
         attributes.title = text
@@ -54,10 +57,15 @@ nonisolated struct SpotlightHighlight: Sendable, Equatable {
         return item
     }
 
-    /// The note, if there is one, then "Question on page 4 of “Title”".
+    /// The note, if there is one, then the answer of an answered question,
+    /// then "Question on page 4 of “Title”".
     var summary: String {
-        let place = "\(kindName) on page \(pageLabel) of \u{201C}\(pdfTitle)\u{201D}"
-        return note.isEmpty ? place : "\(note)\n\(place)"
+        var lines = note.isEmpty ? [] : [note]
+        if let answer {
+            lines.append(answer.isEmpty ? "Answered" : "Answer: \(answer)")
+        }
+        lines.append("\(kindName) on page \(pageLabel) of \u{201C}\(pdfTitle)\u{201D}")
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -74,7 +82,8 @@ extension SpotlightHighlight {
             kindName: record.kind.name,
             text: record.text,
             note: record.note,
-            createdAt: record.createdAt
+            createdAt: record.createdAt,
+            answer: record.isAnsweredQuestion ? record.answer : nil
         )
     }
 }

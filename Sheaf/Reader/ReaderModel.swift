@@ -114,6 +114,13 @@ final class ReaderModel {
     private(set) var fileWriteBlock: FileWriteBlock?
     /// The window's undo manager, set by the reader view.
     @ObservationIgnored weak var undoManager: UndoManager?
+    /// Where Undo goes for the change being made, when it isn't the reader's
+    /// window: a change made from the library's Highlights page is undone
+    /// from there (see `registeringUndo(with:_:)`).
+    @ObservationIgnored private weak var undoOverride: UndoManager?
+    /// Every undo manager changes were registered with, so closing the PDF
+    /// can take them all out.
+    @ObservationIgnored private let undoManagersUsed = NSHashTable<UndoManager>.weakObjects()
     /// A short note over the page, such as why text can't be selected on a
     /// scanned page. It goes away by itself.
     private(set) var pageNotice: String?
@@ -280,6 +287,11 @@ final class ReaderModel {
             fileWriteBlock = .temporaryLibrary
         }
         refreshHighlights()
+        // Notes and colors changed in the library while the PDF was closed
+        // (on the Highlights page) show on its pages as the library has them.
+        if entry?.needsFileSave == true {
+            PDFHighlights.match(document, to: highlights)
+        }
         // Changes that didn't reach the file last time are saved now.
         if PDFHighlights.bringUpToDate(document, with: highlights, removedIDs: entry?.removedHighlightIDs ?? [])
             || entry?.needsFileSave == true {
@@ -319,6 +331,10 @@ final class ReaderModel {
         document.cancelFindString()
         flushPendingSave()
         undoManager?.removeAllActions(withTarget: self)
+        // Including changes made from the library, so ⌘Z there can't reach a closed PDF.
+        for manager in undoManagersUsed.allObjects {
+            manager.removeAllActions(withTarget: self)
+        }
     }
 
     /// Call when the reader leaves the screen: saves now, and drops undo
@@ -809,6 +825,13 @@ final class ReaderModel {
         removeHighlights([HighlightSnapshot(record)], actionName: "Delete Highlight")
     }
 
+    /// Puts back a highlight deleted from the library while this PDF was
+    /// closed, when Undo reaches it after the PDF was opened.
+    func restoreDeleted(_ snapshot: HighlightSnapshot) {
+        guard highlight(id: snapshot.id) == nil else { return }
+        restoreHighlights([snapshot], actionName: "Delete Highlight")
+    }
+
     func highlight(id: UUID) -> HighlightRecord? {
         highlights.first { $0.id == id }
     }
@@ -835,10 +858,25 @@ final class ReaderModel {
         registerUndo(actionName) { $0.removeHighlights(snapshots, actionName: actionName) }
     }
 
+    /// Registers Undo for a change with the reader's window, or with the
+    /// window the change was made in. Undo and Redo of a change stay with
+    /// the undo manager it was registered with.
     func registerUndo(_ actionName: String, _ action: @escaping (ReaderModel) -> Void) {
-        guard let undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { action($0) }
-        undoManager.setActionName(actionName)
+        guard let manager = undoOverride ?? undoManager else { return }
+        undoManagersUsed.add(manager)
+        manager.registerUndo(withTarget: self) { [weak manager] model in
+            model.registeringUndo(with: manager) { action(model) }
+        }
+        manager.setActionName(actionName)
+    }
+
+    /// Makes a change from outside the reader (the library's Highlights
+    /// page) with its Undo in that window, so ⌘Z there takes it back.
+    func registeringUndo(with manager: UndoManager?, _ change: () -> Void) {
+        let previous = undoOverride
+        undoOverride = manager
+        defer { undoOverride = previous }
+        change()
     }
 
     func go(to record: HighlightRecord) {
@@ -893,6 +931,9 @@ final class ReaderModel {
                 lines.append("- " + Citation.quote(item.text, title: title, page: pageLabel(at: item.pageIndex)))
                 if !item.note.isEmpty {
                     lines.append("  - " + Self.markdownContinued(item.note, indent: "    "))
+                }
+                if item.isAnsweredQuestion {
+                    lines.append("  - " + HighlightsMarkdown.answer(item.answer, indent: "    "))
                 }
             }
             lines.append("")

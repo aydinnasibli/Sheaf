@@ -16,6 +16,12 @@ every PDF you read.
   rename or remove them (removing asks first, and ⌘Z brings them back), Space for
   Quick Look, and drag PDFs out to Finder or Mail, or onto a collection
 - Fits **half a laptop screen**: in a narrow window the side panels open over the page
+- **Highlights page** for revising: all PDFs, a collection or one PDF; newest first or
+  in reading order, optionally grouped by PDF; by color and by open or answered
+  questions. Edit, answer, recolor or delete right on the cards (⌘Z undoes), and
+  export exactly what's shown as Markdown
+- **Answering questions**: mark a Question highlight answered, with what you found out;
+  "Open questions" only counts the ones still open. Answers stay in Sheaf's library
 - **Review**: flashcards from your highlights (Definitions to start with). The front
   shows your note, or the PDF and page; Space shows the highlight; 1 Again, 2 Got it
 - **Reader** with page thumbnails, table of contents, single / two-page / scroll layouts,

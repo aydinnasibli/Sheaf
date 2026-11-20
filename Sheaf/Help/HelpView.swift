@@ -171,8 +171,10 @@ struct HelpView: View {
             Paragraph("Click a highlight on the page to write its note right there, change its color, copy it or delete it. Or, in the Highlights panel on the right, click **Add note** under a highlight. Type, then press Return to save, or Esc to cancel. \u{2325}\u{2318}N writes a note on the highlight you just made.")
             Paragraph("**Page notes** are for a whole page, like a slide, a diagram or a scanned page. Choose Highlight \u{203A} Add Page Note (\u{2303}\u{2318}N), or Control-click a page in the page strip. They\u{2019}re listed in the Highlights panel under their page.")
             Paragraph("**My summary**, at the top of the Highlights panel, is for what the whole PDF is about, in your own words.")
+            Paragraph("**Answering questions**: once you\u{2019}ve found out what a Question highlight asked, click **Answer\u{2026}** on its card or in its popover, write what you found (or nothing), and press Return. It gets a check, and it no longer counts as an open question in the library. Answers are kept in Sheaf, not in the PDF.")
             Paragraph("Edit \u{203A} Copy as Quote (\u{21E7}\u{2318}C) copies a highlight, or the selected text, as \u{201C}the text\u{201D} (Title, p. 245), ready for an essay. You can also drag a highlight out of the Highlights panel into another app. Sheaf uses the page numbers printed in the PDF, like xii or 245, when it has them.")
             Paragraph("The **Notes** page in the library gathers your summaries, page notes and highlights with a note, from all your PDFs. To keep them outside Sheaf, click **Export as Markdown** at the bottom of the Highlights panel.")
+            Paragraph("For revising, the library\u{2019}s **Highlights** page shows every highlight from all your PDFs, a collection or one PDF, newest first or in reading order, grouped by PDF if you like. With Question chosen, show only open or answered questions. Point at a card to answer it, add a note, change its color or delete it (\u{2318}Z brings it back). **Export as Markdown\u{2026}** saves exactly what the page shows.")
         }
     }
 

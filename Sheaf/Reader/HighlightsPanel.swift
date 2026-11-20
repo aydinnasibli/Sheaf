@@ -45,7 +45,7 @@ struct HighlightsPanel: View {
                 title: "Export as Markdown",
                 systemImage: "square.and.arrow.down",
                 fillsWidth: true,
-                action: export
+                action: model.exportMarkdown
             )
             .help("Save your summary, highlights and notes as a Markdown file")
             .disabled(!model.hasAnythingToExport)
@@ -115,19 +115,6 @@ struct HighlightsPanel: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.top, 8)
-    }
-
-    private func export() {
-        // A summary or note being typed is saved first, so it's in the file.
-        NotificationCenter.default.post(name: .sheafFlushSaves, object: nil)
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = "\(model.title) highlights.md"
-        let text = model.markdownExport()
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            try? text.write(to: url, atomically: true, encoding: .utf8)
-        }
     }
 }
 
@@ -206,8 +193,13 @@ struct HighlightCard: View {
     @State private var isEditing = false
     @State private var draft = ""
     @State private var isHovered = false
+    /// Typing the answer to a question.
+    @State private var isAnswering = false
+    @State private var answerDraft = ""
     @FocusState private var isNoteFocused: Bool
     @FocusState private var isAddNoteFocused: Bool
+    @FocusState private var isAnswerFocused: Bool
+    @FocusState private var isAnswerButtonFocused: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -228,6 +220,7 @@ struct HighlightCard: View {
                 .accessibilityHint("Goes to this highlight")
                 .accessibilityAction(named: record.note.isEmpty ? "Add note" : "Edit note", startEditing)
                 .accessibilityAction(named: "Copy as quote") { Citation.copy(model.quote(for: record)) }
+                .accessibilityActions { answerActions }
                 .onDrag { Citation.dragItem(model.quote(for: record)) }
 
                 if isEditing {
@@ -255,21 +248,10 @@ struct HighlightCard: View {
                     }
                     .buttonStyle(.sheaf(.quiet, in: Rectangle()))
                     .help("Edit note")
-                } else {
-                    // Always takes its space, so hovering a card doesn't push
-                    // the cards below it down. It shows under the pointer, on
-                    // the selected card, and when the keyboard reaches it.
-                    Button(action: startEditing) {
-                        Label("Add note", systemImage: "plus")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Theme.inkMuted)
-                    }
-                    .buttonStyle(.sheaf(.quiet, in: Rectangle()))
-                    .focused($isAddNoteFocused)
-                    .opacity(isHovered || isSelected || isAddNoteFocused ? 1 : 0)
-                    .help("Add a note (\u{2325}\u{2318}N for the highlight just made)")
-                    .accessibilityLabel("Add note")
                 }
+
+                answer
+                quietRow
             }
             Spacer(minLength: 0)
         }
@@ -286,11 +268,20 @@ struct HighlightCard: View {
         .onChange(of: isNoteFocused) { _, focused in
             if !focused && isEditing { commit() }
         }
+        .onChange(of: isAnswerFocused) { _, focused in
+            if !focused && isAnswering { commitAnswer(isReturn: false) }
+        }
         // The note shortcut asks for this card's note.
         .onAppear(perform: startEditingIfAsked)
         .onChange(of: model.pendingNoteEditID) { startEditingIfAsked() }
         .contextMenu {
             Button(record.note.isEmpty ? "Add Note" : "Edit Note", action: startEditing)
+            if record.kind == .question {
+                Button(record.isAnswered ? "Edit Answer\u{2026}" : "Answer\u{2026}", action: startAnswering)
+                Button(record.isAnswered ? "Mark as Unanswered" : "Mark as Answered") {
+                    model.setAnswer(record.answer, isAnswered: !record.isAnswered, for: record)
+                }
+            }
             Menu("Change Color") {
                 ForEach(HighlightKind.allCases) { kind in
                     Button(kind.name) { model.setKind(kind, for: record) }
@@ -306,7 +297,91 @@ struct HighlightCard: View {
 
     private var border: Color {
         if isSelected { return Theme.accent }
-        return isEditing || isHovered ? Theme.control : Theme.border
+        return isEditing || isAnswering || isHovered ? Theme.control : Theme.border
+    }
+
+    /// A question's answer with a check, or the field she's typing it in.
+    @ViewBuilder
+    private var answer: some View {
+        if isAnswering {
+            CardTextField(
+                placeholder: "Write the answer\u{2026}", text: $answerDraft, isFocused: $isAnswerFocused,
+                hint: CardTextField.answerHint, accessibilityLabel: "Answer"
+            ) {
+                commitAnswer(isReturn: true)
+            } cancel: {
+                isAnswering = false
+            }
+        } else if record.isAnsweredQuestion {
+            Button(action: startAnswering) {
+                AnswerLine(answer: record.answer, tint: record.kind.chipText)
+            }
+            .buttonStyle(.sheaf(.quiet, in: Rectangle()))
+            .help("Edit the answer")
+        }
+    }
+
+    /// "Add note" and, for an open question, "Answer…". The row always
+    /// takes its space, so hovering a card doesn't push the cards below it
+    /// down. It shows under the pointer, on the selected card, and when the
+    /// keyboard reaches it.
+    @ViewBuilder
+    private var quietRow: some View {
+        let addsNote = !isEditing && record.note.isEmpty
+        let answers = !isAnswering && record.isOpenQuestion
+        if addsNote || answers {
+            HStack(spacing: 14) {
+                if addsNote {
+                    Button(action: startEditing) {
+                        Label("Add note", systemImage: "plus")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    .buttonStyle(.sheaf(.quiet, in: Rectangle()))
+                    .focused($isAddNoteFocused)
+                    .help("Add a note (\u{2325}\u{2318}N for the highlight just made)")
+                    .accessibilityLabel("Add note")
+                }
+                if answers {
+                    Button(action: startAnswering) {
+                        Label("Answer\u{2026}", systemImage: "checkmark.circle")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    .buttonStyle(.sheaf(.quiet, in: Rectangle()))
+                    .focused($isAnswerButtonFocused)
+                    .help("Write what you found out, and the question no longer counts as open")
+                    .accessibilityLabel("Answer")
+                }
+            }
+            .opacity(isHovered || isSelected || isAddNoteFocused || isAnswerButtonFocused ? 1 : 0)
+        }
+    }
+
+    @ViewBuilder
+    private var answerActions: some View {
+        if record.kind == .question {
+            Button(record.isAnswered ? "Edit answer" : "Answer", action: startAnswering)
+            if record.isAnswered {
+                Button("Mark as unanswered") { model.setAnswer(record.answer, isAnswered: false, for: record) }
+            }
+        }
+    }
+
+    private func startAnswering() {
+        answerDraft = record.answer
+        isAnswering = true
+        isAnswerFocused = true
+    }
+
+    /// Return marks the question answered, even with nothing written;
+    /// clicking away from an empty answer leaves it open.
+    private func commitAnswer(isReturn: Bool) {
+        guard isAnswering else { return }
+        isAnswering = false
+        let text = answerDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isReturn || !text.isEmpty || record.isAnswered else { return }
+        model.setAnswer(text, isAnswered: true, for: record)
     }
 
     private func startEditingIfAsked() {

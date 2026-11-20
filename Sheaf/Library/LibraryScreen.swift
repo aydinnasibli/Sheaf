@@ -61,7 +61,10 @@ struct LibraryScreen: View {
     @Query(sort: \PageNote.createdAt, order: .reverse) private var pageNotes: [PageNote]
 
     @State private var filter = LibraryFilter.all
-    @State private var highlightKinds = Set<HighlightKind>()
+    /// The colors the Highlights and Notes pages show, like "2,4". Kept for
+    /// the window, so after reading a PDF opened from the page she comes
+    /// back to the same colors (along with the page's other choices).
+    @SceneStorage("highlightKinds") private var highlightKindsValue = ""
     @State private var searchText = ""
     @State private var sortColumn = LibraryColumn.opened
     @State private var sortAscending = false
@@ -76,6 +79,14 @@ struct LibraryScreen: View {
     /// The section shown, chosen in the left panel. The workspace keeps it,
     /// so the library comes back to it after reading a PDF.
     private var scope: LibraryScope { workspace.libraryScope }
+
+    private var highlightKinds: Binding<Set<HighlightKind>> {
+        Binding {
+            Set(highlightKindsValue.split(separator: ",").compactMap { Int($0).flatMap(HighlightKind.init(rawValue:)) })
+        } set: { kinds in
+            highlightKindsValue = kinds.map(\.rawValue).sorted().map(String.init).joined(separator: ",")
+        }
+    }
 
     static var recentHighlightsQuery: FetchDescriptor<HighlightRecord> {
         var descriptor = FetchDescriptor<HighlightRecord>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
@@ -127,7 +138,7 @@ struct LibraryScreen: View {
     private var sidebar: some View {
         LibrarySidebar(
             scope: Bindable(workspace).libraryScope,
-            highlightKinds: $highlightKinds,
+            highlightKinds: highlightKinds,
             entries: entries,
             collections: collections,
             highlights: allHighlights
@@ -148,7 +159,9 @@ struct LibraryScreen: View {
                 summaries: scope == .notes ? entries.filter { !$0.summary.isEmpty } : [],
                 isNotesPage: scope == .notes,
                 searchText: searchText,
-                kinds: $highlightKinds
+                kinds: highlightKinds,
+                entries: entries,
+                collections: collections
             ) { record in
                 if let entry = record.entry { WindowRouter.shared.open(entry, at: record) }
             } onOpenPDF: { entry, page in
@@ -215,11 +228,14 @@ struct LibraryScreen: View {
 
             FlowLayout(spacing: 6) {
                 ForEach(LibraryFilter.allCases, id: \.self) { option in
-                    FilterChip(
-                        title: option.title,
-                        dot: option == .openQuestions ? HighlightKind.question.vivid : nil,
-                        isSelected: filter == option
-                    ) { filter = option }
+                    if option == .openQuestions {
+                        FilterChip(title: openQuestionsTitle, dot: HighlightKind.question.vivid, isSelected: filter == option) {
+                            filter = option
+                        }
+                        .help("PDFs with questions you haven\u{2019}t answered yet")
+                    } else {
+                        FilterChip(title: option.title, isSelected: filter == option) { filter = option }
+                    }
                 }
             }
 
@@ -311,8 +327,15 @@ struct LibraryScreen: View {
         case .unread: return "You\u{2019}ve started every PDF in \(place)."
         case .inProgress: return "PDFs you\u{2019}ve started but not finished show up here."
         case .finished: return "PDFs you\u{2019}ve read to the end show up here."
-        case .openQuestions: return "PDFs with a Question highlight show up here."
+        case .openQuestions: return "PDFs with questions you haven\u{2019}t answered yet show up here. Answer a question on the Highlights page or while reading."
         }
+    }
+
+    /// "Open questions · 3": the questions not answered yet in the PDFs
+    /// here. Answering one brings the number down.
+    private var openQuestionsTitle: String {
+        let count = entries.reduce(0) { $0 + (isInScope($1) ? $1.openQuestionCount : 0) }
+        return count == 0 ? LibraryFilter.openQuestions.title : "\(LibraryFilter.openQuestions.title) \u{00B7} \(count)"
     }
 
     // MARK: Data
@@ -323,7 +346,10 @@ struct LibraryScreen: View {
             guard isInScope(entry), filter.matches(entry) else { return false }
             guard !query.isEmpty else { return true }
             return entry.title.localizedStandardContains(query)
-                || entry.highlights.contains { $0.text.localizedStandardContains(query) || $0.note.localizedStandardContains(query) }
+                || entry.highlights.contains {
+                    $0.text.localizedStandardContains(query) || $0.note.localizedStandardContains(query)
+                        || ($0.isAnsweredQuestion && $0.answer.localizedStandardContains(query))
+                }
         }
         let sorted = shown.sorted { a, b in
             switch sortColumn {

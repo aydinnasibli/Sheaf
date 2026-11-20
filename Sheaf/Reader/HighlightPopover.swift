@@ -92,6 +92,9 @@ final class NoteDraft {
     var text: String
     /// Esc, or the highlight was deleted: nothing to save.
     var isCancelled = false
+    /// The answer being typed to a question, or `nil` when she isn't
+    /// answering. Typed text is kept when the popover closes, like the note.
+    var answer: String?
 
     init(text: String) {
         self.text = text
@@ -99,8 +102,9 @@ final class NoteDraft {
 }
 
 /// The popover at a highlight clicked on the page: a note, the four colors,
-/// Copy, Copy as Quote and Delete. It looks the highlight up by ID each
-/// time, so it never touches one that was just deleted (by Undo, say).
+/// the answer for a question, Copy, Copy as Quote and Delete. It looks the
+/// highlight up by ID each time, so it never touches one that was just
+/// deleted (by Undo, say).
 struct HighlightPopoverView: View {
     let model: ReaderModel
     let id: UUID
@@ -108,6 +112,7 @@ struct HighlightPopoverView: View {
     let dismiss: () -> Void
 
     @FocusState private var isNoteFocused: Bool
+    @FocusState private var isAnswerFocused: Bool
 
     private var record: HighlightRecord? { model.highlight(id: id) }
 
@@ -132,6 +137,10 @@ struct HighlightPopoverView: View {
             } cancel: {
                 draft.isCancelled = true
                 dismiss()
+            }
+
+            if let record, record.kind == .question {
+                answer(for: record)
             }
 
             Hairline()
@@ -164,6 +173,47 @@ struct HighlightPopoverView: View {
             await Task.yield()
             isNoteFocused = true
         }
+    }
+
+    /// A question's answer: "Answer…" while it's open, the answer with a
+    /// check once it's answered, or the field she's typing it in.
+    @ViewBuilder
+    private func answer(for record: HighlightRecord) -> some View {
+        if draft.answer != nil {
+            NoteField(
+                placeholder: "Write the answer\u{2026}",
+                text: Binding(get: { draft.answer ?? "" }, set: { draft.answer = $0 }),
+                isFocused: $isAnswerFocused,
+                hint: CardTextField.answerHint,
+                accessibilityLabel: "Answer"
+            ) {
+                // Return marks it answered, even with nothing written.
+                model.setAnswer(draft.answer ?? "", isAnswered: true, for: record)
+                draft.answer = nil
+                dismiss()
+            } cancel: {
+                draft.answer = nil
+                isNoteFocused = true
+            }
+        } else if record.isAnswered {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                AnswerLine(answer: record.answer, tint: record.kind.chipText, font: .system(size: 13))
+                PopoverButton(title: "Edit", systemImage: "pencil", isIconOnly: true) { startAnswering(record) }
+                    .help("Edit the answer")
+                PopoverButton(title: "Mark as Unanswered", systemImage: "arrow.uturn.backward", isIconOnly: true) {
+                    model.setAnswer(record.answer, isAnswered: false, for: record)
+                }
+                .help("Mark as unanswered, so it counts as an open question again")
+            }
+        } else {
+            PopoverButton(title: "Answer\u{2026}", systemImage: "checkmark.circle") { startAnswering(record) }
+                .help("Write what you found out, and the question no longer counts as open")
+        }
+    }
+
+    private func startAnswering(_ record: HighlightRecord) {
+        draft.answer = record.answer
+        isAnswerFocused = true
     }
 }
 
@@ -215,6 +265,8 @@ struct NoteField: View {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
     var minLines = 2
+    var hint = "Return to save \u{00B7} Esc to cancel"
+    var accessibilityLabel = "Note"
     let save: () -> Void
     let cancel: () -> Void
 
@@ -231,8 +283,8 @@ struct NoteField: View {
                 .focused(isFocused)
                 .onSubmit(save)
                 .onExitCommand(perform: cancel)
-                .accessibilityLabel("Note")
-            Text("Return to save \u{00B7} Esc to cancel")
+                .accessibilityLabel(accessibilityLabel)
+            Text(hint)
                 .font(.system(size: 10.5))
                 .foregroundStyle(Theme.inkMuted)
         }

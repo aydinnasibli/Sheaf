@@ -18,6 +18,12 @@ final class HighlightRecord {
     /// labels. Kept here so the library can cite the page without opening
     /// the PDF. Empty for PDFs without labels and older highlights.
     var pageLabel = ""
+    /// A Question she has answered. Kept in Sheaf's library only, like page
+    /// notes: nothing about answers is written into the PDF.
+    var isAnswered = false
+    /// What she found out, in her own words. May be empty: a question can be
+    /// marked answered without writing anything.
+    var answer = ""
     var entry: LibraryEntry?
 
     init(pageIndex: Int, kind: HighlightKind, text: String, rects: [CGRect], now: Date = .now) {
@@ -41,4 +47,14 @@ final class HighlightRecord {
 
     /// The top of the highlight in page coordinates (PDF y grows upward).
     var top: Double { Double(rects.map(\.maxY).max() ?? 0) }
+
+    /// The left edge of its first line, for ordering highlights at the same height.
+    var left: Double { Double(rects.first?.minX ?? 0) }
+
+    /// A Question not answered yet: what "Open questions" counts. Answers
+    /// only mean something on Questions, so another color is never open
+    /// or answered (and changing it back to Question brings its answer back).
+    var isOpenQuestion: Bool { kindRaw == HighlightKind.question.rawValue && !isAnswered }
+
+    var isAnsweredQuestion: Bool { kindRaw == HighlightKind.question.rawValue && isAnswered }
 }

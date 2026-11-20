@@ -95,11 +95,13 @@ final class LibraryStore {
             text: snapshot.text, note: snapshot.note, rects: snapshot.rects, createdAt: snapshot.createdAt
         )
         record.pageLabel = pageLabel
+        record.isAnswered = snapshot.isAnswered
+        record.answer = snapshot.answer
         entry.removedHighlightIDs.removeAll { $0 == snapshot.id }
         entry.needsFileSave = true
         save()
-        // Spotlight first heard about it without the label.
-        if !pageLabel.isEmpty { searchIndex?.index(record) }
+        // Spotlight first heard about it without the label and the answer.
+        if !pageLabel.isEmpty || snapshot.isAnswered { searchIndex?.index(record) }
         return record
     }
 
@@ -155,6 +157,16 @@ final class LibraryStore {
     func setKind(_ kind: HighlightKind, for record: HighlightRecord) {
         record.kind = kind
         record.entry?.needsFileSave = true
+        save()
+        searchIndex?.index(record)
+    }
+
+    /// Marks a Question answered, with her answer (which may be empty), or
+    /// open again. Kept in the library only, like page notes, so unlike a
+    /// note or a color it doesn't mark the PDF file as needing a save.
+    func setAnswer(_ answer: String, isAnswered: Bool, for record: HighlightRecord) {
+        record.answer = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        record.isAnswered = isAnswered
         save()
         searchIndex?.index(record)
     }

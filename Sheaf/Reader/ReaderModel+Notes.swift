@@ -90,6 +90,11 @@ extension ReaderModel {
         } onClose: { [weak self] in
             guard let self, !draft.isCancelled, let record = highlight(id: id) else { return }
             setNote(draft.text, for: record)
+            // An answer typed and not yet saved with Return is kept too;
+            // an empty one leaves the question as it was.
+            if let answer = draft.answer, !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                setAnswer(answer, isAnswered: true, for: record)
+            }
         }
     }
 
