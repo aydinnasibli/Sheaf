@@ -61,12 +61,12 @@ struct LibraryScreen: View {
     @State private var filter = LibraryFilter.all
     @State private var highlightKinds = Set<HighlightKind>()
     @State private var searchText = ""
-    @State private var selection: LibraryEntry.ID?
     @State private var sortColumn = LibraryColumn.opened
     @State private var sortAscending = false
-    @State private var missingEntry: LibraryEntry?
     @State private var isDropTargeted = false
     @State private var width: CGFloat = 1280
+    /// The left panel, shown over the list in a window too narrow for it beside the list.
+    @State private var showsSidebarOverlay = false
     /// Finds PDFs whose text contains the search.
     @State private var textSearch = LibraryTextSearch()
     @FocusState private var isSearchFocused: Bool
@@ -81,41 +81,29 @@ struct LibraryScreen: View {
         return descriptor
     }
 
+    /// The left panel needs room beside the list; in a narrower window its
+    /// button shows it over the list instead.
+    private var sidebarFits: Bool { width >= 820 }
+
     var body: some View {
         HStack(spacing: 0) {
-            if width >= 820 {
-                LibrarySidebar(
-                    scope: Bindable(workspace).libraryScope,
-                    highlightKinds: $highlightKinds,
-                    entries: entries,
-                    collections: collections,
-                    highlights: allHighlights
-                )
-                .frame(width: 216)
+            if sidebarFits {
+                sidebar
                 Hairline(axis: .vertical)
             }
-            if scope == .review {
-                ReviewPage(highlights: allHighlights, entries: entries, collections: collections)
-            } else if scope.showsHighlights {
-                HighlightsPage(
-                    title: scope == .notes ? "Notes" : "Highlights",
-                    records: allHighlights.filter { scope != .notes || !$0.note.isEmpty },
-                    searchText: searchText,
-                    kinds: $highlightKinds
-                ) { record in
-                    if let entry = record.entry { WindowRouter.shared.open(entry, at: record) }
-                }
-            } else {
-                main
-            }
-            if width >= 1100 && scope.showsPDFs {
-                Hairline(axis: .vertical)
-                RecentHighlightsPanel(records: recentHighlights) { record in
-                    if let entry = record.entry { WindowRouter.shared.open(entry, at: record) }
-                }
-                .frame(width: 300)
-            }
+            content
         }
+        .panelOverlay(isPresented: showsSidebarOverlay && !sidebarFits, edge: .leading) {
+            showsSidebarOverlay = false
+        } panel: {
+            sidebar
+        }
+        // Esc puts the left panel away when it's over the list.
+        .onExitCommand(perform: showsSidebarOverlay ? { showsSidebarOverlay = false } : nil)
+        // Picking a section in the panel over the list shows it; widening
+        // the window puts the panel back beside the list.
+        .onChange(of: scope) { showsSidebarOverlay = false }
+        .onChange(of: sidebarFits) { showsSidebarOverlay = false }
         .overlay(alignment: .top) { Hairline() }
         .background(Theme.background)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
@@ -132,15 +120,42 @@ struct LibraryScreen: View {
         .task(id: textSearchKey) {
             await textSearch.run(textSearchKey.query, in: scope.showsPDFs ? entries.filter { isInScope($0) && filter.matches($0) } : [])
         }
-        .alert(
-            "Can\u{2019}t Find \u{201C}\(missingEntry?.title ?? "")\u{201D}",
-            isPresented: Binding(get: { missingEntry != nil }, set: { if !$0 { missingEntry = nil } }),
-            presenting: missingEntry
-        ) { entry in
-            Button("Remove from Library", role: .destructive) { library.remove([entry]) }
-            Button("Keep", role: .cancel) {}
-        } message: { entry in
-            Text("It was last at \(entry.lastKnownPath). It may have been deleted, or moved to a drive that isn\u{2019}t connected.")
+    }
+
+    private var sidebar: some View {
+        LibrarySidebar(
+            scope: Bindable(workspace).libraryScope,
+            highlightKinds: $highlightKinds,
+            entries: entries,
+            collections: collections,
+            highlights: allHighlights
+        )
+        .frame(width: 216)
+    }
+
+    /// The section picked in the left panel, and recent highlights beside the list.
+    @ViewBuilder
+    private var content: some View {
+        if scope == .review {
+            ReviewPage(highlights: allHighlights, entries: entries, collections: collections)
+        } else if scope.showsHighlights {
+            HighlightsPage(
+                title: scope == .notes ? "Notes" : "Highlights",
+                records: allHighlights.filter { scope != .notes || !$0.note.isEmpty },
+                searchText: searchText,
+                kinds: $highlightKinds
+            ) { record in
+                if let entry = record.entry { WindowRouter.shared.open(entry, at: record) }
+            }
+        } else {
+            main
+        }
+        if width >= 1100 && scope.showsPDFs {
+            Hairline(axis: .vertical)
+            RecentHighlightsPanel(records: recentHighlights) { record in
+                if let entry = record.entry { WindowRouter.shared.open(entry, at: record) }
+            }
+            .frame(width: 300)
         }
     }
 
@@ -149,7 +164,16 @@ struct LibraryScreen: View {
     @ToolbarContentBuilder
     private var header: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            Wordmark().padding(.horizontal, 6)
+            HStack(spacing: 8) {
+                if !sidebarFits {
+                    SquareIconButton(
+                        label: showsSidebarOverlay ? "Hide the left panel" : "Show the left panel: sections and collections",
+                        systemImage: "sidebar.left",
+                        isOn: showsSidebarOverlay
+                    ) { showsSidebarOverlay.toggle() }
+                }
+                Wordmark().padding(.horizontal, 6)
+            }
         }
         .plainBackground()
 
@@ -214,15 +238,12 @@ struct LibraryScreen: View {
         .padding(.horizontal, 32)
         .padding(.top, 26)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .dropDestination(for: URL.self) { urls, _ in
-            let files = urls.filter { LibraryStore.isPDF($0) || LibraryStore.isFolder($0) }
-            guard !files.isEmpty else { return false }
+        .onDrop(of: [.fileURL], delegate: FileDropDelegate(isTargeted: $isDropTargeted) { files in
             // Dropped on a collection, PDFs join it; dropped on Starred, they're starred.
             let collection = shownCollection
             let starred = scope == .starred
             Task { _ = await library.addFiles(files, to: collection, starred: starred) }
-            return true
-        } isTargeted: { isDropTargeted = $0 }
+        })
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: 14)
@@ -234,35 +255,7 @@ struct LibraryScreen: View {
     }
 
     private var list: some View {
-        VStack(spacing: 0) {
-            ColumnHeader(sortColumn: $sortColumn, ascending: $sortAscending)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(rows) { entry in
-                            LibraryRow(entry: entry, isSelected: selection == entry.id)
-                                .id(entry.id)
-                                .onTapGesture(count: 2) { open([entry]) }
-                                .simultaneousGesture(TapGesture().onEnded { selection = entry.id })
-                                .contextMenu { menu(for: entry) }
-                        }
-                    }
-                    .padding(.bottom, 24)
-                }
-                .onChange(of: selection) { _, id in
-                    if let id { proxy.scrollTo(id) }
-                }
-            }
-        }
-        .focusable()
-        .focusEffectDisabled()
-        .onKeyPress(.downArrow) { moveSelection(by: 1) }
-        .onKeyPress(.upArrow) { moveSelection(by: -1) }
-        .onKeyPress(.return) {
-            guard let entry = rows.first(where: { $0.id == selection }) else { return .ignored }
-            open([entry])
-            return .handled
-        }
+        PDFList(rows: rows, collections: collections, sortColumn: $sortColumn, sortAscending: $sortAscending)
     }
 
     /// Shown when the library has PDFs but none fit the search, filter or
@@ -312,35 +305,6 @@ struct LibraryScreen: View {
         case .inProgress: return "PDFs you\u{2019}ve started but not finished show up here."
         case .finished: return "PDFs you\u{2019}ve read to the end show up here."
         case .openQuestions: return "PDFs with a Question highlight show up here."
-        }
-    }
-
-    @ViewBuilder
-    private func menu(for entry: LibraryEntry) -> some View {
-        Button("Open") { open([entry]) }
-        Button("Show in Finder") {
-            if let url = library.resolveFile(for: entry) {
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-            }
-        }
-        Divider()
-        Button(entry.isStarred ? "Unstar" : "Star") { library.setStarred(!entry.isStarred, for: [entry]) }
-        Menu("Add to Collection") {
-            ForEach(collections) { collection in
-                Button(collection.name) { library.move([entry], to: collection) }
-            }
-            if !collections.isEmpty { Divider() }
-            Button("New Collection") {
-                library.move([entry], to: library.createCollection(named: "New Collection"))
-            }
-        }
-        if entry.collection != nil {
-            Button("Remove from Collection") { library.move([entry], to: nil) }
-        }
-        Divider()
-        Button("Remove from Library", role: .destructive) {
-            if selection == entry.id { selection = nil }
-            library.remove([entry])
         }
     }
 
@@ -398,30 +362,12 @@ struct LibraryScreen: View {
         }
     }
 
-    private func moveSelection(by offset: Int) -> KeyPress.Result {
-        let ids = rows.map(\.id)
-        guard !ids.isEmpty else { return .ignored }
-        let current = selection.flatMap { ids.firstIndex(of: $0) } ?? (offset > 0 ? -1 : ids.count)
-        selection = ids[min(max(current + offset, 0), ids.count - 1)]
-        return .handled
-    }
-
     private func open(_ entry: LibraryEntry, atPage pageIndex: Int) {
         guard library.resolveFile(for: entry) != nil else {
-            missingEntry = entry
+            workspace.missingFileRequest = entry.id
             return
         }
         WindowRouter.shared.open(entry, atPage: pageIndex)
-    }
-
-    private func open(_ selected: [LibraryEntry]) {
-        for entry in selected {
-            guard library.resolveFile(for: entry) != nil else {
-                missingEntry = entry
-                continue
-            }
-            WindowRouter.shared.open(entry)
-        }
     }
 }
 

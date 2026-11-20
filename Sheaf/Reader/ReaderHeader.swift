@@ -32,18 +32,22 @@ struct TitleBlock: View {
 struct PenPicker: View {
     let model: ReaderModel
     let compact: Bool
+    /// In a narrow window even the picked pen goes without its name; its
+    /// ring shows which one is picked.
+    var showsPickedName = true
 
     var body: some View {
         HStack(spacing: compact ? 3 : 4) {
             ForEach(HighlightKind.allCases) { kind in
                 let isActive = model.activePen == kind
+                let showsName = !compact || (isActive && showsPickedName)
                 Button { model.choosePen(kind) } label: {
                     HStack(spacing: 7) {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(kind.swatch)
                             .frame(width: 14, height: 14)
                             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.black.opacity(0.12), lineWidth: 1))
-                        if !compact || isActive {
+                        if showsName {
                             Text(kind.name)
                                 .font(.system(size: 12.5, weight: .semibold))
                                 .foregroundStyle(Theme.ink)
@@ -55,7 +59,7 @@ struct PenPicker: View {
                         }
                     }
                     .padding(.leading, 8)
-                    .padding(.trailing, !compact || isActive ? 10 : 8)
+                    .padding(.trailing, showsName ? 10 : 8)
                     .frame(height: 30)
                     .background(isActive ? Theme.penActive : .clear, in: RoundedRectangle(cornerRadius: 9))
                     .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(isActive ? Theme.accent : .clear, lineWidth: 2))

@@ -54,6 +54,15 @@ enum ShortcutList {
             Shortcut("Find the selected text", "\u{2318}E"),
             Shortcut("Search the library", "\u{2318}K"),
         ]),
+        Category(title: "In the library", shortcuts: [
+            Shortcut("Open the selected PDFs", "Return", "\u{2318}\u{2193}"),
+            Shortcut("Select several PDFs", "\u{2318}-click", "\u{21E7}-click"),
+            Shortcut("Select every PDF in the list", "\u{2318}A"),
+            Shortcut("Quick Look", "Space", "\u{2318}Y"),
+            Shortcut("Show in Finder", "\u{2325}\u{2318}R"),
+            Shortcut("Remove from the library", "\u{232B}", "\u{2318}\u{232B}"),
+            Shortcut("Bring back PDFs you removed", "\u{2318}Z"),
+        ]),
         Category(title: "PDFs and windows", shortcuts: [
             Shortcut("Open a PDF", "\u{2318}O"),
             Shortcut("Close the PDF", "\u{2318}W"),

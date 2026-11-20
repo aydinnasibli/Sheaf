@@ -29,7 +29,26 @@ final class Workspace {
     /// The review in progress, kept while a PDF is open so it can go on after.
     var review: ReviewDeck?
 
-    @ObservationIgnored private let library: LibraryStore
+    /// The PDFs selected in the library's list. Kept here so the menu bar
+    /// can act on them, and so they're still selected after reading a PDF.
+    var librarySelection = Set<UUID>()
+    /// Whether the library's list has keyboard focus, so ⌘⌫ removes the
+    /// selected PDFs there and still deletes text in a text field.
+    var isLibraryListFocused = false
+    /// PDFs waiting for the user to confirm removing them (see `PDFActionAlerts`).
+    var removalRequest: [UUID]?
+    /// The PDF being renamed (see `PDFActionAlerts`).
+    var renameRequest: UUID?
+    /// A PDF whose file couldn't be found when opening or sharing it (see `PDFActionAlerts`).
+    var missingFileRequest: UUID?
+    /// The files Quick Look is showing from the library's list, and the one
+    /// on screen (`nil` when it's closed).
+    var quickLookFiles: [URL] = []
+    var quickLookFile: URL?
+    /// The reader's side panels: beside the page, or over it in a narrow window.
+    let readerPanels = ReaderPanels()
+
+    @ObservationIgnored let library: LibraryStore
     @ObservationIgnored private let preferences: UserDefaults
     private static let openKey = "openDocuments"
     private static let selectedKey = "selectedDocument"

@@ -14,6 +14,8 @@ struct LibrarySidebar: View {
 
     @State private var renaming: PDFCollection?
     @State private var nameDraft = ""
+    /// The row PDFs are being dragged over.
+    @State private var dropTarget: LibraryScope?
 
     var body: some View {
         ScrollView {
@@ -41,6 +43,9 @@ struct LibrarySidebar: View {
                     NavRow(title: "Starred", count: entries.count(where: \.isStarred), isSelected: scope == .starred) {
                         Image(systemName: "star")
                     } action: { scope = .starred }
+                    .dropTarget(.starred, current: $dropTarget) { files in
+                        Task { _ = await library.addFiles(files, starred: true) }
+                    }
                 }
 
                 if !workspace.documents.isEmpty {
@@ -71,6 +76,11 @@ struct LibrarySidebar: View {
                             Swatch(color: Theme.collectionColor(collection.colorIndex))
                         } action: {
                             scope = .collection(collection.id)
+                        }
+                        // PDFs dragged from the list or from Finder join the
+                        // collection (new ones are added to the library too).
+                        .dropTarget(.collection(collection.id), current: $dropTarget) { files in
+                            Task { _ = await library.addFiles(files, to: collection) }
                         }
                         .contextMenu {
                             Button("Rename\u{2026}") { startRenaming(collection) }
@@ -233,5 +243,33 @@ struct NavRow<Icon: View>: View {
         .accessibilityLabel(title)
         .accessibilityValue(count.map(String.init) ?? "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+extension View {
+    /// Lets PDFs and folders be dropped on a row of the left panel, from the
+    /// library's list or from Finder. The row is outlined while they're over it.
+    func dropTarget(
+        _ row: LibraryScope, current: Binding<LibraryScope?>, perform: @escaping ([URL]) -> Void
+    ) -> some View {
+        dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter { LibraryStore.isPDF($0) || LibraryStore.isFolder($0) }
+            guard !files.isEmpty else { return false }
+            perform(files)
+            return true
+        } isTargeted: { isTargeted in
+            if isTargeted {
+                current.wrappedValue = row
+            } else if current.wrappedValue == row {
+                current.wrappedValue = nil
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Theme.accent, lineWidth: 2)
+                .opacity(current.wrappedValue == row ? 1 : 0)
+                .animation(Theme.hoverAnimation, value: current.wrappedValue == row)
+                .allowsHitTesting(false)
+        }
     }
 }

@@ -38,7 +38,7 @@ struct ReaderScreen: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minHeight: 480)
         .background(Theme.background)
         .navigationTitle(document.title)
         .toolbar {
@@ -101,42 +101,66 @@ struct ReaderLayout: View {
     @Environment(Workspace.self) private var workspace
     @Environment(\.undoManager) private var undoManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("showsThumbnails") private var showsThumbnails = true
-    @AppStorage("showsHighlightsPanel") private var showsPanel = true
     @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
     @State private var width: CGFloat = 1280
     @State private var pageEntry = ""
     @FocusState private var isSearchFocused: Bool
 
     private var isFocusMode: Bool { workspace.isFocusMode }
-    /// The side panels need room beside the page; in a narrow window they hide.
-    private var stripFits: Bool { width >= 900 }
-    private var panelFits: Bool { width >= 760 }
+    /// The side panels sit beside the page when there's room; in a narrow
+    /// window their buttons show them over the page instead.
+    private var panels: ReaderPanels { workspace.readerPanels }
+
+    // What the header shows at each width, so nothing is pushed into the
+    // toolbar's overflow menu, down to half a laptop screen. Below each
+    // width the control goes, in this order; the menus and shortcuts still
+    // do what it does.
+    private var showsPenNames: Bool { width >= 1540 }
+    private var showsZoom: Bool { width >= 1300 }
+    private var showsLayoutSwitch: Bool { width >= 1100 }
+    private var showsPickedPenName: Bool { width >= 860 }
+    private var showsFocusButton: Bool { width >= 860 || isFocusMode }
+    private var showsSearchButton: Bool { width >= 760 }
+    /// The highlighters and the controls on the right at their full size
+    /// (they never shrink), as last laid out.
+    @State private var penPickerWidth: CGFloat = 204
+    @State private var controlsWidth: CGFloat = 250
+    /// The title gets the header's spare room: the window less the traffic
+    /// lights, the two buttons beside the title, the other controls and the
+    /// gaps between them. In a narrow window it's cut short (the menu's
+    /// tooltip and Rename… show all of it).
+    private var titleWidth: CGFloat {
+        min(280, max(90, width - 236 - penPickerWidth - controlsWidth))
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            if showsThumbnails && stripFits && !isFocusMode {
+            if panels.isBeside(.pages) && !isFocusMode {
                 PageStrip(model: model)
                 Hairline(axis: .vertical)
             }
             pageArea
-            if showsPanel && panelFits && !isFocusMode {
-                Hairline(axis: .vertical)
-                Group {
-                    if model.isShowingSearchResults {
-                        SearchResultsPanel(model: model)
-                            .transition(.opacity)
-                    } else {
-                        HighlightsPanel(model: model)
-                            .transition(.opacity)
-                    }
+                .panelOverlay(isPresented: panels.isOver(.pages) && !isFocusMode, edge: .leading) {
+                    panels.closeOverlay()
+                } panel: {
+                    PageStrip(model: model)
                 }
-                .frame(width: 312)
-                .animation(Theme.motion, value: model.isShowingSearchResults)
+                .panelOverlay(isPresented: panels.isOver(.highlights) && !isFocusMode, edge: .trailing) {
+                    panels.closeOverlay()
+                } panel: {
+                    rightPanel
+                }
+            if panels.isBeside(.highlights) && !isFocusMode {
+                Hairline(axis: .vertical)
+                rightPanel
             }
         }
         .overlay(alignment: .top) { Hairline() }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+            width = $0
+            panels.setWidth($0)
+        }
+        .onChange(of: isFocusMode) { panels.closeOverlay() }
         .navigationTitle(model.title)
         .toolbar { header }
         .task(id: model.searchQuery) {
@@ -168,6 +192,8 @@ struct ReaderLayout: View {
             model.restoreReadingPosition()
             model.startBackgroundWork()
             model.pdfView.onEscape = { [workspace] in
+                // Esc first puts away a panel shown over the page.
+                if workspace.readerPanels.closeOverlay() { return true }
                 guard workspace.isFocusMode else { return false }
                 workspace.isFocusMode = false
                 return true
@@ -187,7 +213,25 @@ struct ReaderLayout: View {
             model.goToPage(number: index + 1)
             document.pendingPageIndex = nil
         }
-        .onDisappear { model.suspend() }
+        .onDisappear {
+            model.suspend()
+            panels.closeOverlay()
+        }
+    }
+
+    /// Highlights, or the search results while searching.
+    private var rightPanel: some View {
+        Group {
+            if model.isShowingSearchResults {
+                SearchResultsPanel(model: model)
+                    .transition(.opacity)
+            } else {
+                HighlightsPanel(model: model)
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: 312)
+        .animation(Theme.motion, value: model.isShowingSearchResults)
     }
 
     private var pageArea: some View {
@@ -258,54 +302,65 @@ struct ReaderLayout: View {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: 12) {
                 HStack(spacing: 8) {
-                    if stripFits && !isFocusMode {
+                    if !isFocusMode {
                         SquareIconButton(
-                            label: showsThumbnails ? "Hide pages and contents (\u{2325}\u{2318}1)" : "Show pages and contents (\u{2325}\u{2318}1)",
-                            systemImage: "sidebar.left"
-                        ) { showsThumbnails.toggle() }
+                            label: panels.isShowing(.pages) ? "Hide pages and contents (\u{2325}\u{2318}1)" : "Show pages and contents (\u{2325}\u{2318}1)",
+                            systemImage: "sidebar.left",
+                            isOn: panels.isOver(.pages)
+                        ) { panels.toggle(.pages) }
                     }
                     SquareIconButton(label: "Back to library (\u{21E7}\u{2318}L)", systemImage: "chevron.left") {
                         workspace.showLibrary()
                     }
                 }
-                TitleBlock(model: model)
+                ReaderTitleMenu(model: model)
+                    .frame(maxWidth: titleWidth, alignment: .leading)
             }
         }
         .plainBackground()
 
         ToolbarItem(placement: .principal) {
-            PenPicker(model: model, compact: width < 1360)
+            PenPicker(model: model, compact: !showsPenNames, showsPickedName: showsPickedPenName)
+                .fixedSize()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { penPickerWidth = $0 }
         }
         .plainBackground()
 
         ToolbarItem(placement: .primaryAction) {
             HStack(spacing: 8) {
-                if width >= 1080 {
+                if showsLayoutSwitch {
                     LayoutSwitch(model: model)
                 }
                 PagePill(model: model)
-                if width >= 1200 {
+                if showsZoom {
                     ZoomPill(model: model)
                 }
-                SquareIconButton(label: "Search in this PDF (\u{2318}F)", systemImage: "magnifyingglass", isOn: model.isSearchBarVisible) {
-                    if model.isSearchBarVisible {
-                        model.closeSearch()
-                    } else {
-                        model.searchFocusRequest += 1
+                if showsSearchButton {
+                    SquareIconButton(label: "Search in this PDF (\u{2318}F)", systemImage: "magnifyingglass", isOn: model.isSearchBarVisible) {
+                        if model.isSearchBarVisible {
+                            model.closeSearch()
+                        } else {
+                            model.searchFocusRequest += 1
+                        }
                     }
                 }
-                SquareIconButton(
-                    label: isFocusMode ? "Leave focus mode (Esc)" : "Focus mode: only the page, full screen (\u{21E7}\u{2318}F)",
-                    systemImage: isFocusMode ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                    isOn: isFocusMode
-                ) { workspace.isFocusMode.toggle() }
-                if panelFits && !isFocusMode {
+                if showsFocusButton {
                     SquareIconButton(
-                        label: showsPanel ? "Hide highlights panel (\u{2325}\u{2318}2)" : "Show highlights panel (\u{2325}\u{2318}2)",
-                        systemImage: "sidebar.right"
-                    ) { showsPanel.toggle() }
+                        label: isFocusMode ? "Leave focus mode (Esc)" : "Focus mode: only the page, full screen (\u{21E7}\u{2318}F)",
+                        systemImage: isFocusMode ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                        isOn: isFocusMode
+                    ) { workspace.isFocusMode.toggle() }
+                }
+                if !isFocusMode {
+                    SquareIconButton(
+                        label: panels.isShowing(.highlights) ? "Hide highlights panel (\u{2325}\u{2318}2)" : "Show highlights panel (\u{2325}\u{2318}2)",
+                        systemImage: "sidebar.right",
+                        isOn: panels.isOver(.highlights)
+                    ) { panels.toggle(.highlights) }
                 }
             }
+            .fixedSize()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { controlsWidth = $0 }
         }
         .plainBackground()
     }

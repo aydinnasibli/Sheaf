@@ -17,7 +17,6 @@ final class OpenDocument: Identifiable {
     }
 
     let id: UUID
-    private(set) var title: String
     private(set) var phase = Phase.loading
     /// A highlight to scroll to once the reader is on screen.
     var pendingHighlightID: UUID?
@@ -28,14 +27,22 @@ final class OpenDocument: Identifiable {
     @ObservationIgnored private let library: LibraryStore
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var isClosed = false
+    /// The title when the PDF was opened, for after it's removed from the library.
+    @ObservationIgnored private let openedTitle: String
 
     /// Doesn't load the file yet: `loadIfNeeded()` does, the first time the
     /// PDF is shown, so reopening many PDFs at launch stays quick.
     init(entry: LibraryEntry, library: LibraryStore) {
         self.id = entry.id
-        self.title = entry.title
+        self.openedTitle = entry.title
         self.entry = entry
         self.library = library
+    }
+
+    /// The PDF's title in the library. Read from the entry each time, so
+    /// renaming the PDF shows everywhere it's open (the entry is observable).
+    var title: String {
+        entry.isInLibrary ? entry.title : openedTitle
     }
 
     var model: ReaderModel? {
@@ -99,7 +106,6 @@ final class OpenDocument: Identifiable {
         // Highlights saved in the file that the library doesn't have (it was
         // removed from the library and opened again, say) join the library.
         library.importHighlights(found, into: entry)
-        title = entry.title
         return ReaderModel(document: document, entry: entry, store: library, fileURL: url)
     }
 

@@ -12,6 +12,10 @@ every PDF you read.
   and the full text of every PDF (indexed in the background, shown with the page and
   the words around each match). Drop PDFs or whole folders to add them; dropped on a
   collection, they join it
+- The library's list works like Finder's: select several PDFs to open, star, file,
+  rename or remove them (removing asks first, and ⌘Z brings them back), Space for
+  Quick Look, and drag PDFs out to Finder or Mail, or onto a collection
+- Fits **half a laptop screen**: in a narrow window the side panels open over the page
 - **Review**: flashcards from your highlights (Definitions to start with). The front
   shows your note, or the PDF and page; Space shows the highlight; 1 Again, 2 Got it
 - **Reader** with page thumbnails, table of contents, single / two-page / scroll layouts,

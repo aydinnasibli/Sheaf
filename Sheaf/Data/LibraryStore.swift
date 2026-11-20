@@ -19,6 +19,9 @@ final class LibraryStore {
     /// Why the library couldn't be saved, for the window to show. Cleared by
     /// the next save that works.
     private(set) var saveError: String?
+    /// Goes up when a collection is made, renamed or deleted, so menus that
+    /// list collections outside SwiftUI's queries (the menu bar) update.
+    private(set) var collectionChanges = 0
 
     /// Files Sheaf is currently allowed to read through a bookmark.
     @ObservationIgnored private var accessedURLs = Set<URL>()
@@ -266,14 +269,6 @@ final class LibraryStore {
         save()
     }
 
-    /// Removes PDFs from the library. The files themselves are left alone.
-    func remove(_ items: [LibraryEntry]) {
-        let ids = items.map(\.id)
-        for item in items { context.delete(item) }
-        save()
-        searchIndex?.remove(pdfIDs: ids)
-    }
-
     @discardableResult
     func createCollection(named name: String, now: Date = .now) -> PDFCollection {
         let count = (try? context.fetchCount(FetchDescriptor<PDFCollection>())) ?? 0
@@ -281,6 +276,7 @@ final class LibraryStore {
         let collection = PDFCollection(name: trimmed.isEmpty ? "Untitled Collection" : trimmed, colorIndex: count, now: now)
         context.insert(collection)
         save()
+        collectionChanges += 1
         return collection
     }
 
@@ -289,12 +285,14 @@ final class LibraryStore {
         guard !trimmed.isEmpty else { return }
         collection.name = trimmed
         save()
+        collectionChanges += 1
     }
 
     /// Deletes a collection. Its PDFs stay in the library.
     func delete(_ collection: PDFCollection) {
         context.delete(collection)
         save()
+        collectionChanges += 1
     }
 
     func save() {

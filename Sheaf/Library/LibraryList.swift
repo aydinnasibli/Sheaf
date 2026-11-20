@@ -80,8 +80,15 @@ private struct ColumnHeaderButton: View {
 }
 
 struct LibraryRow: View {
+    static let height: CGFloat = 58
+
     let entry: LibraryEntry
     let isSelected: Bool
+    /// The list has keyboard focus: the selection is drawn a little stronger,
+    /// as Mac lists do.
+    var isListFocused = false
+    /// For VoiceOver's Open action.
+    let onOpen: () -> Void
 
     @State private var isHovered = false
 
@@ -151,12 +158,9 @@ struct LibraryRow: View {
             }
             .frame(maxHeight: .infinity)
         }
-        .frame(height: 58)
+        .frame(height: Self.height)
         .padding(.horizontal, 8)
-        .background(
-            isSelected ? Theme.selectedRow : (isHovered ? Theme.selectedRow.opacity(0.5) : .clear),
-            in: RoundedRectangle(cornerRadius: 8)
-        )
+        .background(background, in: RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .bottom) {
             Rectangle().fill(Theme.rowDivider).frame(height: 1).padding(.horizontal, 8)
         }
@@ -164,9 +168,29 @@ struct LibraryRow: View {
         .contentShape(Rectangle())
         .animation(Theme.hoverAnimation, value: isHovered)
         .onHover { isHovered = $0 }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Double-click to open")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(entry.title)
+        .accessibilityValue(accessibilityDetails)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAction(named: "Open", onOpen)
+    }
+
+    private var background: Color {
+        if isSelected { return isListFocused ? Theme.selectedRowFocused : Theme.selectedRow }
+        return isHovered ? Theme.selectedRow.opacity(0.5) : .clear
+    }
+
+    /// "Starred, 12 pages, in Research, 23 highlights, 40% read, opened yesterday".
+    private var accessibilityDetails: String {
+        var parts: [String] = []
+        if entry.isStarred { parts.append("Starred") }
+        parts.append(entry.pageCount == 1 ? "1 page" : "\(entry.pageCount) pages")
+        if let collection = entry.collection { parts.append("in \(collection.name)") }
+        let highlights = entry.highlights.count
+        parts.append(highlights == 1 ? "1 highlight" : "\(highlights) highlights")
+        parts.append("\(entry.progress.formatted(.percent.precision(.fractionLength(0)))) read")
+        parts.append("opened \(entry.lastOpenedAt.formatted(.relative(presentation: .named)))")
+        return parts.joined(separator: ", ")
     }
 }
 

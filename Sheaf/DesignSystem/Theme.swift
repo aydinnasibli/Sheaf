@@ -15,6 +15,8 @@ enum Theme {
 
     /// Selected row in the library list.
     static let selectedRow = Color(light: 0xF2F2F2, dark: 0x262626)
+    /// Selected row while the list has keyboard focus.
+    static let selectedRowFocused = Color(light: 0xE8E8E8, dark: 0x303030)
     /// Selected item in the library's left panel.
     static let navSelected = Color(light: 0xFFFFFF, dark: 0x2A2A2A)
     /// The picked highlighter in the reader header.
@@ -46,6 +48,11 @@ enum Theme {
     static let hoverTint = Color(light: 0x000000, dark: 0xFFFFFF).opacity(0.06)
     /// Laid behind or over a control while it's pressed.
     static let pressTint = Color(light: 0x000000, dark: 0xFFFFFF).opacity(0.11)
+    /// Dims what's behind a panel shown over the page or the list.
+    static let scrim = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return NSColor(hex: 0x000000, alpha: isDark ? 0.4 : 0.12)
+    })
     /// How quickly hover feedback fades in and out.
     static let hoverAnimation = Animation.easeOut(duration: 0.12)
     /// Panels, labels and bars that appear or change size.

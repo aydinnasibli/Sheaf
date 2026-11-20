@@ -8,8 +8,21 @@ struct SheafCommands: Commands {
     /// focus, so the menus work even while typing in a search field.
     private var reader: ReaderModel? { workspace.selectedDocument?.model }
 
-    @AppStorage("showsThumbnails") private var showsThumbnails = true
-    @AppStorage("showsHighlightsPanel") private var showsHighlightsPanel = true
+    /// For File › Add to Collection. Read again when one is made, renamed or deleted.
+    private var collections: [PDFCollection] {
+        _ = workspace.library.collectionChanges
+        return workspace.library.allCollections()
+    }
+
+    /// A View menu item for a reader panel: shows or hides it beside the
+    /// page, or over the page when the window is too narrow for it.
+    private func panelBinding(_ panel: ReaderPanels.Panel) -> Binding<Bool> {
+        Binding(
+            get: { workspace.readerPanels.isShowing(panel) },
+            set: { _ in workspace.readerPanels.toggle(panel) }
+        )
+    }
+
     @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
     @Environment(\.openWindow) private var openWindow
 
@@ -35,6 +48,19 @@ struct SheafCommands: Commands {
                 Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
                     .keyboardShortcut("w")
             }
+        }
+
+        // File > Show in Finder, Share…, Rename…, star, collections and
+        // Remove from Library: for the PDF on screen, or the PDFs selected
+        // in the library.
+        CommandGroup(after: .saveItem) {
+            Divider()
+            PDFMenuItems(
+                entries: workspace.commandTargets,
+                collections: collections,
+                workspace: workspace,
+                isMenuBar: true
+            )
         }
 
         // File > Print, with or without highlights.
@@ -130,9 +156,10 @@ struct SheafCommands: Commands {
             Divider()
             Toggle("Dark Pages in Dark Mode", isOn: $darkPages)
             Divider()
-            Toggle("Show Pages and Contents", isOn: $showsThumbnails)
+            // In a narrow window these show the panel over the page.
+            Toggle("Show Pages and Contents", isOn: panelBinding(.pages))
                 .keyboardShortcut("1", modifiers: [.command, .option])
-            Toggle("Show Highlights Panel", isOn: $showsHighlightsPanel)
+            Toggle("Show Highlights Panel", isOn: panelBinding(.highlights))
                 .keyboardShortcut("2", modifiers: [.command, .option])
             Toggle("Focus Mode", isOn: Binding(
                 get: { workspace.isFocusMode },
