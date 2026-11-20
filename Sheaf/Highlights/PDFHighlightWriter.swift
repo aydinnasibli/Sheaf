@@ -9,6 +9,12 @@ import PDFKit
 /// and so are Sheaf highlights the library doesn't know about (the file may
 /// have been highlighted before it was removed from the library, say).
 ///
+/// PDFKit's save writes a whole new file and leaves out what it doesn't
+/// understand. Files that would lose content that way (attachments, layers,
+/// embedded media) aren't rewritten at all (see `PDFContentCheck`); catalog
+/// entries it drops, such as printed page numbers, are put back afterwards
+/// (see `PDFCatalogRestore`).
+///
 /// The new file is checked before it replaces the old one, and replaces it
 /// in one step, so a failed save leaves the file as it was.
 nonisolated enum PDFHighlightWriter {
@@ -18,6 +24,8 @@ nonisolated enum PDFHighlightWriter {
         case signed
         /// The PDF is password-protected; rewriting it would remove the password.
         case passwordProtected
+        /// The PDF has things PDFKit's save would lose, like attached files.
+        case wouldLoseContent(Set<PDFContentCheck.Loss>)
         case failed(String)
     }
 
@@ -57,7 +65,15 @@ nonisolated enum PDFHighlightWriter {
         }
         if document.isEncrypted { return .passwordProtected }
         if isSigned(document) { return .signed }
+        // The file as it is, read by Core Graphics: what PDFKit's save would lose.
+        guard let source = PDFContentCheck.document(from: original) else {
+            return .failed("The file couldn\u{2019}t be read.")
+        }
+        if PDFContentCheck.hasSignedPermissions(source) { return .signed }
+        let losses = PDFContentCheck.losses(in: source)
+        guard losses.isEmpty else { return .wouldLoseContent(losses) }
         let pageCount = document.pageCount
+        let labels = pageLabels(of: document)
 
         let rewritten = Set(highlights.map(\.id)).union(removedIDs)
         for index in 0..<pageCount {
@@ -75,11 +91,21 @@ nonisolated enum PDFHighlightWriter {
             }
         }
 
-        guard let data = document.dataRepresentation() else {
+        guard var data = document.dataRepresentation() else {
             return .failed("PDFKit couldn\u{2019}t save the file.")
         }
         guard isComplete(data, pageCount: pageCount, highlights: highlights) else {
             return .failed("The new version of the file didn\u{2019}t check out, so the file was left as it was.")
+        }
+        // Printed page numbers and the like, put back if that checks out
+        // too. If not, the file is saved as PDFKit wrote it, as before.
+        if let restored = PDFCatalogRestore.restoring(from: source, into: data),
+           PDFCatalogRestore.isIntact(restored.data, comparedWith: data, adding: restored.keys),
+           isComplete(
+               restored.data, pageCount: pageCount, highlights: highlights,
+               labels: restored.keys.contains("PageLabels") ? labels : nil
+           ) {
+            data = restored.data
         }
         archive?.keepCopy(of: original, fileName: url.lastPathComponent)
         do {
@@ -91,9 +117,11 @@ nonisolated enum PDFHighlightWriter {
     }
 
     /// Whether `data` is a PDF that opens again, with all `pageCount` pages
-    /// and every highlight just written. Checked before it replaces the file.
-    static func isComplete(_ data: Data, pageCount: Int, highlights: [HighlightSnapshot]) -> Bool {
+    /// and every highlight just written, and, given `labels`, with those
+    /// page labels. Checked before it replaces the file.
+    static func isComplete(_ data: Data, pageCount: Int, highlights: [HighlightSnapshot], labels: [String]? = nil) -> Bool {
         guard let check = PDFDocument(data: data), check.pageCount == pageCount else { return false }
+        if let labels, pageLabels(of: check) != labels { return false }
         let written = highlights.filter { (0..<pageCount).contains($0.pageIndex) && !$0.rects.isEmpty }
         for (index, onPage) in Dictionary(grouping: written, by: \.pageIndex) {
             guard let page = check.page(at: index) else { return false }
@@ -121,6 +149,11 @@ nonisolated enum PDFHighlightWriter {
             annotation.setValue("\(prefix)\(highlight.id.uuidString)-\(line)", forAnnotationKey: idKey)
             return annotation
         }
+    }
+
+    /// Each page's label as PDFKit reads it (its number when it has none).
+    static func pageLabels(of document: PDFDocument) -> [String] {
+        (0..<document.pageCount).map { document.page(at: $0)?.label ?? "" }
     }
 
     static func id(of annotation: PDFAnnotation) -> UUID? {

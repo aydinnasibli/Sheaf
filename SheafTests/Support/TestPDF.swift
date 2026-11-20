@@ -71,17 +71,38 @@ enum TestPDF {
     /// tree, like `0 << /S /r >> 2 << /S /D /St 245 >>` for i, ii, 245, 246.
     /// Written by hand: Core Graphics and PDFKit can't write page labels.
     static func labeledData(pages: [String], labels: String) -> Data {
+        handWritten(pages: pages, catalog: "/PageLabels << /Nums [\(labels)] >>")
+    }
+
+    /// A PDF written by hand as text, for what Core Graphics and PDFKit
+    /// can't write: page labels, attachments, layers… One page per string,
+    /// each drawn as a line of text at (72, 700).
+    ///
+    /// Objects 1, 2 and 3 are the catalog, the page tree and a font, and
+    /// each page takes two (the page, then its content), so `objects` are
+    /// numbered from `firstObject(after: pages)`. `catalog` is added to the
+    /// catalog; `pageEntries`, `resources` and `content` to a page by index
+    /// (`content` is drawn after its line of text).
+    static func handWritten(
+        pages: [String], catalog: String = "", pageEntries: [Int: String] = [:],
+        resources: [Int: String] = [:], content: [Int: String] = [:], objects extra: [String] = []
+    ) -> Data {
         let kids = pages.indices.map { "\(4 + $0 * 2) 0 R" }.joined(separator: " ")
         var objects = [
-            "<< /Type /Catalog /Pages 2 0 R /PageLabels << /Nums [\(labels)] >> >>",
+            "<< /Type /Catalog /Pages 2 0 R \(catalog) >>",
             "<< /Type /Pages /Kids [\(kids)] /Count \(pages.count) >>",
             "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         ]
         for (index, text) in pages.enumerated() {
-            let content = "BT /F1 14 Tf 72 700 Td (\(text)) Tj ET"
-            objects.append("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents \(5 + index * 2) 0 R >>")
-            objects.append("<< /Length \(content.utf8.count) >>\nstream\n\(content)\nendstream")
+            let stream = "BT /F1 14 Tf 72 700 Td (\(text)) Tj ET" + (content[index].map { "\n" + $0 } ?? "")
+            objects.append(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                    + "/Resources << /Font << /F1 3 0 R >> \(resources[index] ?? "") >> "
+                    + "/Contents \(5 + index * 2) 0 R \(pageEntries[index] ?? "") >>"
+            )
+            objects.append("<< /Length \(stream.utf8.count) >>\nstream\n\(stream)\nendstream")
         }
+        objects += extra
         var file = "%PDF-1.4\n"
         var offsets: [Int] = []
         for (index, object) in objects.enumerated() {
@@ -93,6 +114,11 @@ enum TestPDF {
         for offset in offsets { file += String(format: "%010d 00000 n \n", offset) }
         file += "trailer\n<< /Size \(objects.count + 1) /Root 1 0 R >>\nstartxref\n\(table)\n%%EOF\n"
         return Data(file.utf8)
+    }
+
+    /// The number of the first of `handWritten`'s extra objects.
+    static func firstObject(after pages: [String]) -> Int {
+        4 + 2 * pages.count
     }
 
     static func make(pages: [String], labels: String) -> PDFDocument {

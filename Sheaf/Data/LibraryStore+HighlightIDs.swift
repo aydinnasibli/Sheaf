@@ -36,7 +36,7 @@ extension LibraryStore {
         if !entry.removedHighlightIDs.contains(id) {
             entry.removedHighlightIDs.append(id)
         }
-        entry.needsFileSave = true
+        markNeedsFileSave(entry)
         let fresh = UUID()
         taken.insert(fresh)
         return fresh
@@ -72,7 +72,7 @@ extension LibraryStore {
                     if !entry.highlights.contains(where: { $0.id == id }), !entry.removedHighlightIDs.contains(id) {
                         entry.removedHighlightIDs.append(id)
                     }
-                    entry.needsFileSave = true
+                    markNeedsFileSave(entry)
                 }
                 changed.append(record)
             }

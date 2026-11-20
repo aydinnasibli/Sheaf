@@ -6,18 +6,30 @@ final class SaveTracker {
     static let shared = SaveTracker()
 
     private var tasks: [UUID: (task: Task<Void, Never>, fileName: String)] = [:]
+    /// The newest save of each PDF, by library entry. A new save of the PDF
+    /// waits for it, so its saves run in order even when they come from
+    /// different readers: one from a reader that was closed can't finish
+    /// after a newer one.
+    private var newestSaves: [UUID: Task<Void, Never>] = [:]
 
     var isSaving: Bool { !tasks.isEmpty }
 
     /// The files being saved, for the alert when quitting takes too long.
     var fileNames: [String] { Set(tasks.values.map(\.fileName)).filter { !$0.isEmpty }.sorted() }
 
-    func track(_ task: Task<Void, Never>, fileName: String = "") {
+    /// The save of the PDF with library entry `file` that started last, while it runs.
+    func newestSave(of file: UUID) -> Task<Void, Never>? {
+        newestSaves[file]
+    }
+
+    func track(_ task: Task<Void, Never>, fileName: String = "", file: UUID? = nil) {
         let id = UUID()
         tasks[id] = (task, fileName)
+        if let file { newestSaves[file] = task }
         Task { [weak self] in
             await task.value
             self?.tasks[id] = nil
+            if let file, self?.newestSaves[file] == task { self?.newestSaves[file] = nil }
         }
     }
 

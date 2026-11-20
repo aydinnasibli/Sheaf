@@ -21,7 +21,7 @@ nonisolated enum PageLabels {
     }
 
     /// The labels to show for a PDF: its own, or the ones remembered from
-    /// before Sheaf saved highlights into it (saving loses them).
+    /// before Sheaf saved highlights into it (older versions lost them).
     static func labels(for document: PDFDocument, remembered: [String]) -> [String] {
         let own = read(from: document)
         if !own.isEmpty { return own }

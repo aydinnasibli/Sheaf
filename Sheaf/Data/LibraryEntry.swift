@@ -38,8 +38,9 @@ final class LibraryEntry {
     /// Sheaf only, not in the file.
     var summary = ""
     /// The PDF's printed page labels ("i", "ii", "1", …), one per page, when
-    /// they differ from plain page numbers. Remembered because saving
-    /// highlights into a PDF loses its labels (PDFKit doesn't write them).
+    /// they differ from plain page numbers. Remembered because older versions
+    /// of Sheaf (and other apps) lost them when saving highlights into a PDF;
+    /// Sheaf now puts them back into the file when it saves.
     var pageLabels: [String] = []
     /// The pages read (0-based), in order: drives the "Read" percentage and
     /// "Finished". A page jumped to and left on screen a while counts on

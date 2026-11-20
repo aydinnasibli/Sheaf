@@ -68,6 +68,79 @@ struct FileSafetyTests {
         #expect(try idsInFile(url) == [highlight.id])
     }
 
+    // MARK: Swaps that fail partway
+
+    @Test func aSwapThatFailsPartwayPutsTheOriginalBack() throws {
+        let url = try TestFiles.pdf(pages: ["The original"])
+        let original = try Data(contentsOf: url)
+        // Moves the original into the temporary folder and fails; then
+        // writing in place fails too.
+        let steps = SafeFileWriter.Steps(
+            swap: { url, replacement in
+                try FileManager.default.moveItem(at: url, to: replacement.deletingLastPathComponent().appending(path: "Aside.pdf"))
+                throw SwapFailed()
+            },
+            writeInPlace: { _, _ in throw SwapFailed() }
+        )
+
+        #expect(throws: SwapFailed.self) { try SafeFileWriter.replace(url, with: Data("new version".utf8), steps: steps) }
+        #expect(try Data(contentsOf: url) == original)
+    }
+
+    @Test func theOriginalComesBackFromWhereTheErrorSaysEvenOnAFullDrive() throws {
+        let url = try TestFiles.pdf(pages: ["The original"])
+        let original = try Data(contentsOf: url)
+        let aside = try TestFiles.folder().appending(path: "Elsewhere.pdf")
+        let steps = SafeFileWriter.Steps(
+            swap: { url, _ in
+                try FileManager.default.moveItem(at: url, to: aside)
+                throw NSError(
+                    domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError,
+                    userInfo: [SafeFileWriter.originalLocationKey: aside]
+                )
+            },
+            writeInPlace: { _, _ in Issue.record("A file is never written in place on a full drive") }
+        )
+
+        #expect(throws: (any Error).self) { try SafeFileWriter.replace(url, with: Data("new version".utf8), steps: steps) }
+        #expect(try Data(contentsOf: url) == original)
+        #expect(!FileManager.default.fileExists(atPath: aside.path(percentEncoded: false)))
+    }
+
+    @Test func withTheOriginalBackTheFileIsWrittenInPlace() throws {
+        let url = try TestFiles.pdf(pages: ["The original"])
+        let new = Data("new version".utf8)
+        let steps = SafeFileWriter.Steps(
+            swap: { url, replacement in
+                try FileManager.default.moveItem(at: url, to: replacement.deletingLastPathComponent().appending(path: "Aside.pdf"))
+                throw SwapFailed()
+            },
+            writeInPlace: SafeFileWriter.Steps.system.writeInPlace
+        )
+
+        try SafeFileWriter.replace(url, with: new, steps: steps)
+        #expect(try Data(contentsOf: url) == new)
+    }
+
+    @Test func aSwapThatFailsAfterSwappingKeepsTheNewVersion() throws {
+        let url = try TestFiles.pdf(pages: ["The original"])
+        let new = Data("new version".utf8)
+        let steps = SafeFileWriter.Steps(
+            swap: { url, replacement in
+                let fileManager = FileManager.default
+                let parked = replacement.deletingLastPathComponent().appending(path: "Parked.pdf")
+                try fileManager.moveItem(at: url, to: parked)
+                try fileManager.moveItem(at: replacement, to: url)
+                try fileManager.moveItem(at: parked, to: replacement)
+                throw SwapFailed()
+            },
+            writeInPlace: { _, _ in Issue.record("The new version was in place already") }
+        )
+
+        try SafeFileWriter.replace(url, with: new, steps: steps)
+        #expect(try Data(contentsOf: url) == new)
+    }
+
     @Test func aFailedSaveIsTriedAgain() async throws {
         let (model, url) = try makeReader(pages: ["Try this again"])
         model.saveRetryDelays = [.milliseconds(400)]
@@ -81,7 +154,7 @@ struct FileSafetyTests {
 
         try highlight("Try this", in: model)
         await model.saveAndWait()
-        #expect(model.saveError != nil)
+        #expect(model.saveError?.contains("try again shortly") == true)
         #expect(try idsInFile(url).isEmpty)
         #expect(model.entry?.needsFileSave == true, "Kept for next time, too")
 
@@ -91,6 +164,83 @@ struct FileSafetyTests {
         try await waitUntil { model.saveError == nil }
         #expect(try idsInFile(url) == Set(model.highlights.map(\.id)))
         #expect(model.entry?.needsFileSave == false)
+    }
+
+    @Test func afterTheLastRetryTheMessageSaysWhenSheafTriesAgain() async throws {
+        let (model, url) = try makeReader(pages: ["Not now but later"])
+        model.saveRetryDelays = []
+        let folder = url.deletingLastPathComponent()
+        try TestFiles.setPermissions(0o444, of: url)
+        try TestFiles.setPermissions(0o555, of: folder)
+        defer {
+            try? TestFiles.setPermissions(0o755, of: folder)
+            try? TestFiles.setPermissions(0o644, of: url)
+        }
+
+        try highlight("Not now", in: model)
+        await model.saveAndWait()
+        let message = try #require(model.saveError)
+        #expect(!message.contains("shortly"))
+        #expect(message.contains("after your next change, when you open this PDF again, and when you quit"))
+
+        // As it says: the next change tries again.
+        try TestFiles.setPermissions(0o755, of: folder)
+        try TestFiles.setPermissions(0o644, of: url)
+        try highlight("but later", in: model)
+        await model.saveAndWait()
+        #expect(model.saveError == nil)
+        #expect(try idsInFile(url) == Set(model.highlights.map(\.id)))
+        #expect(model.entry?.needsFileSave == false)
+    }
+
+    // MARK: Saves that finish late
+
+    /// Another reader for the PDF at `url`, as when it's opened again.
+    private func reopen(_ url: URL, entry: LibraryEntry?) throws -> ReaderModel {
+        let preferences = try #require(UserDefaults(suiteName: "SheafTests.\(UUID().uuidString)"))
+        return ReaderModel(document: try #require(PDFDocument(url: url)), entry: entry, store: store, fileURL: url, preferences: preferences)
+    }
+
+    @Test func aSaveThatFinishesAfterAChangeInTheLibraryLeavesTheFileUnsaved() async throws {
+        let (model, url) = try makeReader(pages: ["Late saves lose"])
+        try highlight("Late saves", in: model)
+        let record = try #require(model.highlights.first)
+        let entry = try #require(model.entry)
+        // A save starts and the PDF is closed; before the save finishes,
+        // a note is written on the Highlights page.
+        model.flushPendingSave()
+        model.close()
+        store.setNote("Written while it saved", for: record)
+        await model.saveAndWait()
+
+        #expect(try idsInFile(url) == [record.id])
+        #expect(entry.needsFileSave, "The file doesn't have the note yet")
+
+        // Opening the PDF again saves it.
+        let reopened = try reopen(url, entry: entry)
+        await reopened.saveAndWait()
+        #expect(!entry.needsFileSave)
+        let notes = try #require(PDFDocument(url: url)?.page(at: 0)).annotations
+            .filter { PDFHighlights.id(of: $0) == record.id }.map(\.contents)
+        #expect(!notes.isEmpty && notes.allSatisfy { $0 == "Written while it saved" })
+    }
+
+    @Test func aSaveFromAClosedReaderDoesntMarkTheReopenedPDFSaved() async throws {
+        let (model, url) = try makeReader(pages: ["First thought then a second"])
+        try highlight("First thought", in: model)
+        let entry = try #require(model.entry)
+        model.flushPendingSave()
+        model.close()
+        // Opened again before that save finished, and highlighted again.
+        let reopened = try reopen(url, entry: entry)
+        try highlight("a second", in: reopened)
+        await model.saveAndWait()
+
+        #expect(entry.needsFileSave, "The second highlight isn't in the file yet")
+        await reopened.saveAndWait()
+        #expect(!entry.needsFileSave)
+        #expect(try idsInFile(url) == Set(entry.highlights.map(\.id)))
+        #expect(try idsInFile(url).count == 2)
     }
 
     @Test func aTemporaryLibraryWritesNothingIntoFiles() async throws {
@@ -161,7 +311,7 @@ struct FileSafetyTests {
 
     // MARK: Library backups
 
-    @Test func theLibraryIsBackedUpAndTheNewestFiveAreKept() throws {
+    @Test func theLibraryIsBackedUpWithAllItsFiles() throws {
         let folder = try TestFiles.folder()
         let storeURL = folder.appending(path: "default.store")
         try Data("store".utf8).write(to: storeURL)
@@ -172,20 +322,92 @@ struct FileSafetyTests {
         try Data("cover".utf8).write(to: external.appending(path: "cover"))
         let backups = LibraryBackup.folder(for: storeURL)
 
-        let start = Date(timeIntervalSince1970: 1_800_000_000)
-        var made: [URL] = []
-        for hour in 0..<7 {
-            made.append(try #require(LibraryBackup.backUp(storeURL: storeURL, into: backups, now: start + Double(hour) * 3600)))
-        }
-        LibraryBackup.prune(backups)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = try #require(LibraryBackup.backUp(storeURL: storeURL, into: backups, now: now))
+        let second = try #require(LibraryBackup.backUp(storeURL: storeURL, into: backups, now: now))
+        #expect(first.lastPathComponent == LibraryBackup.folderName(for: now))
+        #expect(second.lastPathComponent == LibraryBackup.folderName(for: now) + " 2")
+        #expect(try Data(contentsOf: second.appending(path: "default.store")) == Data("store".utf8))
+        #expect(try Data(contentsOf: second.appending(path: "default.store-wal")) == Data("wal".utf8))
+        #expect(try Data(contentsOf: second.appending(path: "default.store-shm")) == Data("shm".utf8))
+        #expect(try Data(contentsOf: second.appending(path: ".default_SUPPORT/_EXTERNAL_DATA/cover")) == Data("cover".utf8))
+    }
 
-        let left = try FileManager.default.contentsOfDirectory(atPath: backups.path(percentEncoded: false)).sorted()
-        #expect(left == made.suffix(5).map(\.lastPathComponent).sorted())
-        let newest = try #require(made.last)
-        #expect(try Data(contentsOf: newest.appending(path: "default.store")) == Data("store".utf8))
-        #expect(try Data(contentsOf: newest.appending(path: "default.store-wal")) == Data("wal".utf8))
-        #expect(try Data(contentsOf: newest.appending(path: "default.store-shm")) == Data("shm".utf8))
-        #expect(try Data(contentsOf: newest.appending(path: ".default_SUPPORT/_EXTERNAL_DATA/cover")) == Data("cover".utf8))
+    private var utc: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        return calendar
+    }
+
+    /// Backups `hours` apart going back from `newest`, newest first.
+    private func backups(every hours: Int, count: Int, from newest: Date) -> [(name: String, date: Date)] {
+        (0..<count).map { index in
+            let date = newest - Double(index * hours) * 3600
+            return (name: LibraryBackup.folderName(for: date), date: date)
+        }
+    }
+
+    @Test func backupsGoBackAboutAMonthNotJustAFewLaunches() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        // Opened three times a day for two months.
+        let all = backups(every: 8, count: 180, from: now)
+        let kept = LibraryBackup.keptBackups(all, calendar: utc)
+        let keptDates = all.filter { kept.contains($0.name) }.map(\.date)
+
+        #expect(Set(all.prefix(LibraryBackup.keptCount).map(\.name)).isSubset(of: kept), "The newest few")
+        for day in 0..<LibraryBackup.keptDays {
+            let start = utc.startOfDay(for: now - Double(day) * 86_400)
+            #expect(keptDates.contains { utc.isDate($0, inSameDayAs: start) }, "One from each of the last days")
+        }
+        let oldest = try #require(keptDates.min())
+        #expect(now.timeIntervalSince(oldest) > 28 * 86_400, "One from about a month ago")
+        #expect(kept.count <= LibraryBackup.keptCount + LibraryBackup.keptDays + LibraryBackup.keptWeeks)
+    }
+
+    @Test func manyLaunchesInOneDayDontPushOutOlderBackups() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        // A backup a day for 40 days, then twenty launches today (updates
+        // relaunch Sheaf), as when a damaged library keeps being backed up.
+        let daily = backups(every: 24, count: 40, from: now - 86_400)
+        let today = backups(every: 0, count: 20, from: now).enumerated().map { index, backup in
+            (name: backup.name + (index == 0 ? "" : " \(index + 1)"), date: backup.date)
+        }
+        let kept = LibraryBackup.keptBackups(today + daily, calendar: utc)
+
+        #expect(kept.contains(daily[0].name), "Yesterday's")
+        #expect(kept.contains(daily[5].name), "From six days ago")
+        #expect(daily.contains { kept.contains($0.name) && now.timeIntervalSince($0.date) > 28 * 86_400 }, "From a month ago")
+        #expect(today.filter { kept.contains($0.name) }.count == LibraryBackup.keptCount)
+        // The newest of today is the one with the highest number.
+        #expect(kept.contains(today[19].name))
+        #expect(!kept.contains(today[0].name))
+    }
+
+    @Test func backupsFromBeforeAFormatChangeAreKeptLonger() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var all = backups(every: 8, count: 180, from: now)
+        // Taken 50 days ago, before an update changed the library's format.
+        all[150].name += LibraryBackup.formatChangeSuffix
+        let kept = LibraryBackup.keptBackups(all, calendar: utc)
+        #expect(kept.contains(all[150].name))
+        #expect(!kept.contains(all[151].name))
+    }
+
+    @Test func pruningDeletesOnlyBackupsTheRulesDontKeep() throws {
+        let backupsFolder = try TestFiles.folder()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let all = backups(every: 8, count: 60, from: now)
+        for backup in all {
+            try FileManager.default.createDirectory(at: backupsFolder.appending(path: backup.name), withIntermediateDirectories: true)
+        }
+        // Not a backup: left alone.
+        try FileManager.default.createDirectory(at: backupsFolder.appending(path: "Keep this"), withIntermediateDirectories: true)
+
+        LibraryBackup.prune(backupsFolder, calendar: utc)
+
+        let left = Set(try FileManager.default.contentsOfDirectory(atPath: backupsFolder.path(percentEncoded: false)))
+        #expect(left == LibraryBackup.keptBackups(all, calendar: utc).union(["Keep this"]))
+        #expect(left.count < all.count)
     }
 
     @Test func thereIsNothingToBackUpBeforeTheFirstLaunch() throws {
@@ -193,3 +415,6 @@ struct FileSafetyTests {
         #expect(LibraryBackup.backUp(storeURL: folder.appending(path: "default.store")) == nil)
     }
 }
+
+/// A swap that went wrong, in the fakes above.
+private struct SwapFailed: Error {}

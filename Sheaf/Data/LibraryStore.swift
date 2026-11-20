@@ -46,6 +46,9 @@ final class LibraryStore {
 
     /// Files Sheaf is currently allowed to read through a bookmark.
     @ObservationIgnored private var accessedURLs = Set<URL>()
+    /// Highlight changes each entry's file doesn't have yet, by entry ID
+    /// (see `fileChangeCount(ofEntry:)`). In memory only: saves end with the app.
+    @ObservationIgnored private var fileChangeCounts: [UUID: Int] = [:]
     /// Spotlight's copy of the highlights, kept current by the highlight
     /// methods below. `nil` in tests, which never touch Spotlight.
     @ObservationIgnored var searchIndex: (any HighlightIndexing)?
@@ -101,7 +104,7 @@ final class LibraryStore {
         record.pageLabel = pageLabel
         context.insert(record)
         record.entry = entry
-        entry.needsFileSave = true
+        markNeedsFileSave(entry)
         save()
         searchIndex?.index(record)
         return record
@@ -121,7 +124,7 @@ final class LibraryStore {
         record.isAnswered = snapshot.isAnswered
         record.answer = snapshot.answer
         entry.removedHighlightIDs.removeAll { $0 == snapshot.id }
-        entry.needsFileSave = true
+        markNeedsFileSave(entry)
         save()
         // Spotlight first heard about it without the label and the answer.
         if !pageLabel.isEmpty || snapshot.isAnswered { searchIndex?.index(record) }
@@ -178,14 +181,14 @@ final class LibraryStore {
 
     func setNote(_ note: String, for record: HighlightRecord) {
         record.note = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        record.entry?.needsFileSave = true
+        if let entry = record.entry { markNeedsFileSave(entry) }
         save()
         searchIndex?.index(record)
     }
 
     func setKind(_ kind: HighlightKind, for record: HighlightRecord) {
         record.kind = kind
-        record.entry?.needsFileSave = true
+        if let entry = record.entry { markNeedsFileSave(entry) }
         save()
         searchIndex?.index(record)
     }
@@ -206,17 +209,39 @@ final class LibraryStore {
             if !entry.removedHighlightIDs.contains(record.id) {
                 entry.removedHighlightIDs.append(record.id)
             }
-            entry.needsFileSave = true
+            markNeedsFileSave(entry)
         }
         context.delete(record)
         save()
         searchIndex?.remove(highlightIDs: [id])
     }
 
-    /// Records that highlights were written into the entry's file: the
-    /// deletions in `removed` reached it, and if nothing changed meanwhile
-    /// the file is up to date.
-    func didWriteHighlights(of entry: LibraryEntry, to url: URL, removed: Set<UUID>, isUpToDate: Bool) {
+    // MARK: Saving into PDF files
+
+    /// Marks the entry's file as missing a highlight change, to be saved.
+    func markNeedsFileSave(_ entry: LibraryEntry) {
+        entry.needsFileSave = true
+        noteFileChange(of: entry)
+    }
+
+    /// Counts a change the entry's file doesn't have yet, so that saves
+    /// started before it don't mark the file up to date.
+    func noteFileChange(of entry: LibraryEntry) {
+        fileChangeCounts[entry.id, default: 0] += 1
+    }
+
+    /// How many changes to the entry's highlights there have been this
+    /// session. A save compares it with the count when it started: if it
+    /// went up meanwhile, the file is still behind.
+    func fileChangeCount(ofEntry id: UUID) -> Int {
+        fileChangeCounts[id] ?? 0
+    }
+
+    /// Records that highlights were written into the entry's file at `url`:
+    /// the deletions in `removed` reached it, and if nothing changed
+    /// meanwhile the file is up to date. `bookmark` is a new one for the
+    /// file, made by the save.
+    func didWriteHighlights(of entry: LibraryEntry, to url: URL, removed: Set<UUID>, isUpToDate: Bool, bookmark: Data?) {
         guard entry.modelContext != nil, !entry.isDeleted else { return }
         if !removed.isEmpty {
             entry.removedHighlightIDs.removeAll { removed.contains($0) }
@@ -226,8 +251,13 @@ final class LibraryStore {
         }
         // Saving replaces the file with a new one, which a bookmark made
         // before can't follow if the file is moved later.
-        if let fresh = Self.makeBookmark(for: url) {
-            entry.bookmark = fresh
+        if let bookmark {
+            entry.bookmark = bookmark
+        }
+        // The file may have been moved since it was opened.
+        let path = Self.path(of: url)
+        if entry.lastKnownPath != path {
+            entry.lastKnownPath = path
         }
         save()
     }

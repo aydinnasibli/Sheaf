@@ -167,9 +167,12 @@ final class ReaderModel {
     /// The text of a box highlight when no words are found in the box.
     static let imageAreaText = "Image area"
 
-    enum FileWriteBlock {
+    enum FileWriteBlock: Equatable {
         case passwordProtected
         case signed
+        /// The PDF has things saving would lose, like attached files or
+        /// layers (see `PDFContentCheck`).
+        case wouldLoseContent(Set<PDFContentCheck.Loss>)
         /// The library couldn't be opened, so this session nothing is
         /// written into PDF files.
         case temporaryLibrary
@@ -180,6 +183,8 @@ final class ReaderModel {
                 "This PDF is password-protected, so highlights are kept in Sheaf\u{2019}s library and not written into the file."
             case .signed:
                 "This PDF is digitally signed, so highlights are kept in Sheaf\u{2019}s library and not written into the file (that would break the signature)."
+            case .wouldLoseContent(let losses):
+                "This PDF has \(PDFContentCheck.describe(losses)), which Sheaf can\u{2019}t keep when it saves, so highlights are kept in Sheaf\u{2019}s library and not written into the file."
             case .temporaryLibrary:
                 "Sheaf couldn\u{2019}t open your library, so this time nothing is written into PDF files, and new highlights are kept only until Sheaf quits."
             }
@@ -252,8 +257,8 @@ final class ReaderModel {
         self.preferences = preferences
         self.outline = OutlineItem.items(under: document.outlineRoot)
         self.outlineRows = OutlineRow.flatten(outline, in: document)
-        // Saving highlights into a PDF loses its page labels, so the library
-        // remembers them from when the file still had them.
+        // Older versions of Sheaf lost a PDF's page labels when saving highlights
+        // into it (and other apps may), so the library remembers them too.
         // Found in the background as the PDF was read, when it was (`scan`).
         let ownLabels = scan?.labels ?? PageLabels.read(from: document)
         let remembered = entry?.pageLabels ?? []
@@ -1043,6 +1048,8 @@ final class ReaderModel {
     private func scheduleSave() {
         hasUnsavedChanges = true
         failedSaveCount = 0
+        // Saves started before now no longer make the file up to date.
+        if let entry { store?.noteFileChange(of: entry) }
         saveLater(after: saveDelay)
     }
 
@@ -1069,12 +1076,10 @@ final class ReaderModel {
 
     /// Saves run one after another on a background thread: writing a long
     /// PDF can take several seconds, and reading must not freeze meanwhile.
+    /// A PDF's saves stay in order even across readers (it was closed and
+    /// opened again while one was running).
     private func startSave() {
-        guard hasUnsavedChanges, fileURL != nil, fileWriteBlock == nil else { return }
-        guard let url = currentFileURL() else {
-            didFailToSave(fileName: fileURL?.lastPathComponent ?? title)
-            return
-        }
+        guard hasUnsavedChanges, let fileURL, fileWriteBlock == nil else { return }
         hasUnsavedChanges = false
         let snapshots = highlights.map(HighlightSnapshot.init)
         // Deleted highlights to take out of the file, and only those: any
@@ -1083,27 +1088,33 @@ final class ReaderModel {
         let archive = entry.flatMap { entry in
             store?.originalsFolder.map { OriginalPDFArchive(folder: $0, pdfID: entry.id) }
         }
-        let previous = saveChain
+        // The file is found again through its bookmark before each save, so
+        // a PDF that's moved or renamed while it's open still saves.
+        let location = if let entry, store != nil {
+            SaveLocation(bookmark: entry.bookmark, path: URL(filePath: entry.lastKnownPath))
+        } else {
+            SaveLocation(bookmark: nil, path: fileURL)
+        }
+        // Changes made after this point (here or anywhere else, like the
+        // library's Highlights page) mean this save leaves the file behind.
+        // (By ID: the entry may be gone by the time the save finishes.)
+        let entryID = entry?.id
+        let changeCount = entryID.flatMap { store?.fileChangeCount(ofEntry: $0) }
+        let previous = entryID.flatMap { SaveTracker.shared.newestSave(of: $0) } ?? saveChain
         let task = Task { [weak self, entry, store] in
             await previous?.value
-            let outcome = await Task.detached(priority: .utility) {
-                PDFHighlightWriter.write(snapshots, removing: removed, to: url, keepingOriginalIn: archive)
+            let result = await Task.detached(priority: .utility) {
+                location.write(snapshots, removing: removed, keepingOriginalIn: archive)
             }.value
             // Recorded even if the PDF was closed meanwhile.
-            if outcome == .saved, let entry, let store {
-                store.didWriteHighlights(of: entry, to: url, removed: removed, isUpToDate: !(self?.hasUnsavedChanges ?? false))
+            if result.outcome == .saved, let url = result.url, let entry, let entryID, let store {
+                let isUpToDate = store.fileChangeCount(ofEntry: entryID) == changeCount && !(self?.hasUnsavedChanges ?? false)
+                store.didWriteHighlights(of: entry, to: url, removed: removed, isUpToDate: isUpToDate, bookmark: result.bookmark)
             }
-            self?.finishSave(outcome, url: url)
+            self?.finishSave(result.outcome, url: result.url ?? fileURL)
         }
         saveChain = task
-        SaveTracker.shared.track(task, fileName: url.lastPathComponent)
-    }
-
-    /// The file to save into, found again through its bookmark before each
-    /// save, so a PDF that's moved or renamed while it's open still saves.
-    private func currentFileURL() -> URL? {
-        guard let entry, let store else { return fileURL }
-        return store.resolveFile(for: entry)
+        SaveTracker.shared.track(task, fileName: fileURL.lastPathComponent, file: entryID)
     }
 
     private func finishSave(_ outcome: PDFHighlightWriter.Outcome, url: URL) {
@@ -1117,6 +1128,9 @@ final class ReaderModel {
         case .passwordProtected:
             fileWriteBlock = .passwordProtected
             saveError = nil
+        case .wouldLoseContent(let losses):
+            fileWriteBlock = .wouldLoseContent(losses)
+            saveError = nil
         case .failed(let reason):
             NSLog("Sheaf: couldn\u{2019}t save highlights into \(url.path(percentEncoded: false)): \(reason)")
             didFailToSave(fileName: url.lastPathComponent)
@@ -1124,11 +1138,16 @@ final class ReaderModel {
     }
 
     /// Keeps the changes marked unsaved and tries again after a pause, a
-    /// few times. The highlights themselves are safe in the library.
+    /// few times. The highlights themselves are safe in the library. After
+    /// the last pause, the next change, opening the PDF again and quitting
+    /// still try again.
     private func didFailToSave(fileName: String) {
         hasUnsavedChanges = true
-        saveError = "Couldn\u{2019}t save highlights into \u{201C}\(fileName)\u{201D} yet. They\u{2019}re safe in Sheaf\u{2019}s library, and Sheaf will try again."
-        guard failedSaveCount < saveRetryDelays.count else { return }
+        guard failedSaveCount < saveRetryDelays.count else {
+            saveError = "Couldn\u{2019}t save highlights into \u{201C}\(fileName)\u{201D}. They\u{2019}re safe in Sheaf\u{2019}s library, and Sheaf will try again after your next change, when you open this PDF again, and when you quit."
+            return
+        }
+        saveError = "Couldn\u{2019}t save highlights into \u{201C}\(fileName)\u{201D} yet. They\u{2019}re safe in Sheaf\u{2019}s library, and Sheaf will try again shortly."
         let delay = saveRetryDelays[failedSaveCount]
         failedSaveCount += 1
         saveLater(after: delay)
