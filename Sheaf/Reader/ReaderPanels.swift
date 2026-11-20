@@ -4,21 +4,36 @@ import Observation
 /// The reader's two side panels: pages and contents on the left, highlights
 /// (or search results) on the right.
 ///
-/// Each sits beside the page when the window is wide enough, and whether it
-/// shows there is remembered between launches. In a narrower window (half
-/// of a laptop screen, say) its button still works: the panel opens over
-/// the page instead, until Esc, the button again or a click on the page
-/// puts it away. Only one panel is over the page at a time.
+/// Each sits beside the page when the window is wide enough to leave the
+/// page at least `minimumPageWidth`, and whether it shows there is
+/// remembered between launches. The Highlights panel comes first: with it
+/// beside the page, the pages panel needs a wider window. In a narrower
+/// window (half of a laptop screen, say) a panel's button still works: the
+/// panel opens over the page instead, until Esc, the button again or a
+/// click on the page puts it away. Only one panel is over the page at a time.
 @Observable
 final class ReaderPanels {
     enum Panel: CaseIterable {
         case pages, highlights
 
-        /// The narrowest reader the panel fits beside the page in.
-        var minimumWidth: CGFloat { self == .pages ? 900 : 760 }
+        /// The panel's widest, with its divider: the pages panel showing the
+        /// contents (PageStrip), the Highlights panel (ReaderLayout).
+        var width: CGFloat { self == .pages ? 261 : 313 }
 
         /// Where "show beside the page" is remembered.
         var preferenceKey: String { self == .pages ? "showsThumbnails" : "showsHighlightsPanel" }
+    }
+
+    /// The page keeps at least this much room beside the panels, so a
+    /// line of a paper stays readable at a sensible size.
+    static let minimumPageWidth: CGFloat = 480
+
+    /// The narrowest reader a panel fits beside the page in: 800 for the
+    /// Highlights panel; 760 for the pages panel alone, 1060 beside the
+    /// Highlights panel.
+    static func minimumWidth(for panel: Panel, besideHighlights: Bool) -> CGFloat {
+        let panels = panel == .pages && besideHighlights ? Panel.pages.width + Panel.highlights.width : panel.width
+        return ((minimumPageWidth + panels) / 20).rounded(.up) * 20
     }
 
     /// The panel shown over the page, if any.
@@ -28,6 +43,7 @@ final class ReaderPanels {
     /// Changes only when a width threshold is crossed, so resizing the
     /// window doesn't rebuild the menus on every step.
     private var fitting: Set<Panel> = Set(Panel.allCases)
+    @ObservationIgnored private var width: CGFloat?
 
     @ObservationIgnored private let preferences: UserDefaults
 
@@ -57,6 +73,9 @@ final class ReaderPanels {
             let shows = !(pinned[panel] ?? true)
             pinned[panel] = shows
             preferences.set(shows, forKey: panel.preferenceKey)
+            // Showing or hiding the Highlights panel changes the room left
+            // for the pages panel.
+            updateFitting()
         } else {
             overlay = overlay == panel ? nil : panel
         }
@@ -72,7 +91,18 @@ final class ReaderPanels {
 
     /// Called by the reader as the window resizes.
     func setWidth(_ width: CGFloat) {
-        let nowFitting = Set(Panel.allCases.filter { width >= $0.minimumWidth })
+        self.width = width
+        updateFitting()
+    }
+
+    private func updateFitting() {
+        guard let width else { return }
+        let highlightsFit = width >= Self.minimumWidth(for: .highlights, besideHighlights: false)
+        let besideHighlights = highlightsFit && pinned[.highlights] == true
+        var nowFitting: Set<Panel> = highlightsFit ? [.highlights] : []
+        if width >= Self.minimumWidth(for: .pages, besideHighlights: besideHighlights) {
+            nowFitting.insert(.pages)
+        }
         guard nowFitting != fitting else { return }
         fitting = nowFitting
         if let overlay, fits(overlay) {

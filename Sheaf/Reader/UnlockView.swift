@@ -23,9 +23,9 @@ struct UnlockView: View {
                 .frame(maxWidth: 260)
                 .onSubmit(unlock)
             if didFail {
-                Text("That password didn\u{2019}t work. Try again.")
+                Label("That password didn\u{2019}t work. Try again.", systemImage: "exclamationmark.circle")
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Theme.error)
             }
             PrimaryButton(title: "Unlock", action: unlock)
                 .disabled(password.isEmpty)

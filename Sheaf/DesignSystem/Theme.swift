@@ -11,7 +11,32 @@ enum Theme {
     static let sidebar = Color(light: 0xFAFAFA, dark: 0x1B1B1B)
     static let raised = Color(light: 0xFFFFFF, dark: 0x1C1C1C)
     static let field = Color(light: 0xF4F4F4, dark: 0x242424)
-    static let pageCanvas = Color(light: 0xF0F0F0, dark: 0x0F0F0F)
+    /// Behind the pages in the reader.
+    static let pageCanvas = Color(light: canvasLight, dark: canvasDark)
+    private static let canvasLight: UInt32 = 0xF0F0F0
+    private static let canvasDark: UInt32 = 0x0F0F0F
+
+    // MARK: Pages
+
+    /// Paper: under a page's thumbnail or a PDF's cover while it's drawn.
+    /// White in Dark Mode too, as the pages themselves are.
+    static let paper = Color.white
+
+    /// `pageCanvas` for the page view, which takes a fixed color.
+    static func pageCanvas(isDark: Bool) -> NSColor {
+        NSColor(hex: isDark ? canvasDark : canvasLight)
+    }
+
+    /// The page view's background with Dark Pages on. Its colors are
+    /// inverted with the pages', so near-white comes out a dark gray just
+    /// lighter than the pages.
+    static let darkPagesCanvas = NSColor(hex: 0xFEFEFE)
+
+    /// The edge of a highlight color drawn on the page (a box being dragged,
+    /// a search match): the color, a little darker.
+    static func edge(of color: NSColor, darkness: CGFloat = 0.35) -> NSColor {
+        color.blended(withFraction: darkness, of: .black) ?? color
+    }
 
     /// Selected row in the library list.
     static let selectedRow = Color(light: 0xF2F2F2, dark: 0x262626)
@@ -27,6 +52,19 @@ enum Theme {
     static let border = Color(light: 0xEBEBEB, dark: 0x2A2A2A)
     static let rowDivider = Color(light: 0xF2F2F2, dark: 0x232323)
     static let control = Color(light: 0xE2E2E2, dark: 0x363636)
+    /// The thin edge around a highlighter swatch, so the light colors show on white.
+    static let swatchEdge = Color.black.opacity(0.12)
+
+    // MARK: Shadows
+
+    /// Under bars, notices and buttons floating over the page.
+    static let floatingShadow = Color.black.opacity(0.12)
+    /// Under a side panel shown over the page or the list.
+    static let panelShadow = Color.black.opacity(0.16)
+    /// Under a page's thumbnail.
+    static let thumbnailShadow = Color.black.opacity(0.14)
+    /// Under a flashcard.
+    static let cardShadow = Color.black.opacity(0.06)
 
     // MARK: Text
 
@@ -34,6 +72,9 @@ enum Theme {
     static let inkSecondary = Color(light: 0x333333, dark: 0xD6D6D6)
     /// Labels, counts and metadata. Passes 4.5:1 on every surface above.
     static let inkMuted = Color(light: 0x5C5C5C, dark: 0xA3A3A3)
+    /// Something that went wrong, like a password that didn't work. Ink,
+    /// with a symbol beside it, since the only colors are the highlighters'.
+    static let error = ink
 
     // MARK: Accent
 

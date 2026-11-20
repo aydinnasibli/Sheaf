@@ -32,7 +32,7 @@ struct PageNotice: View {
         .padding(.vertical, 9)
         .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.control))
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        .shadow(color: Theme.floatingShadow, radius: 12, y: 4)
         .accessibilityElement(children: .contain)
         .onAppear { AccessibilityNotification.Announcement(text).post() }
         .onChange(of: text) { AccessibilityNotification.Announcement(text).post() }

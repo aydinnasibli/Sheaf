@@ -204,7 +204,7 @@ struct LibraryScreen: View {
         .plainBackground()
 
         ToolbarItem(placement: .primaryAction) {
-            PrimaryButton(title: "Open PDF", systemImage: "plus") {
+            PrimaryButton(title: "Open PDF\u{2026}", systemImage: "plus") {
                 WindowRouter.shared.showOpenPanel()
             }
             .help("Open PDFs and add them to the library (\u{2318}O)")
@@ -258,9 +258,7 @@ struct LibraryScreen: View {
                 }
             }
         }
-        .padding(.horizontal, 32)
-        .padding(.top, 26)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .libraryPage()
         .onDrop(of: [.fileURL], delegate: FileDropDelegate(isTargeted: $isDropTargeted) { files in
             // Dropped on a collection, PDFs join it; dropped on Starred, they're starred.
             let collection = shownCollection

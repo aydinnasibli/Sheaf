@@ -42,7 +42,7 @@ struct HighlightsPanel: View {
             Spacer(minLength: 0)
 
             SecondaryButton(
-                title: "Export as Markdown",
+                title: "Export as Markdown\u{2026}",
                 systemImage: "square.and.arrow.down",
                 fillsWidth: true,
                 action: model.exportMarkdown
@@ -182,7 +182,7 @@ struct HighlightFilterChips: View {
 }
 
 /// A highlight in the panel. Click the text to go to it; click the note
-/// (or "Add note") to type a note right on the card. Drag the text out of
+/// (or "Add Note") to type a note right on the card. Drag the text out of
 /// Sheaf to drop it as a quote.
 struct HighlightCard: View {
     let record: HighlightRecord
@@ -228,9 +228,7 @@ struct HighlightCard: View {
                 .help("Go to this highlight. Drag it out of Sheaf to drop it as a quote.")
                 .accessibilityLabel("\(record.kind.name): \(record.text)")
                 .accessibilityHint("Goes to this highlight")
-                .accessibilityAction(named: record.note.isEmpty ? "Add note" : "Edit note", startEditing)
-                .accessibilityAction(named: "Copy as quote") { Citation.copy(model.quote(for: record)) }
-                .accessibilityActions { answerActions }
+                .accessibilityActions { accessibilityActions }
                 .onDrag { Citation.dragItem(model.quote(for: record)) }
 
                 if isEditing {
@@ -297,7 +295,13 @@ struct HighlightCard: View {
         // The note shortcut asks for this card's note.
         .onAppear(perform: startEditingIfAsked)
         .onChange(of: model.pendingNoteEditID) { startEditingIfAsked() }
+        // The same items, in the same order, as a highlight's menu on the
+        // library's Highlights page.
         .contextMenu {
+            Button("Go to Highlight") { model.go(to: record) }
+            Button("Copy Text") { Citation.copy(record.text) }
+            Button("Copy as Quote") { Citation.copy(model.quote(for: record)) }
+            Divider()
             Button(record.note.isEmpty ? "Add Note" : "Edit Note", action: startEditing)
             if record.kind == .question {
                 Button(record.isAnswered ? "Edit Answer\u{2026}" : "Answer\u{2026}", action: startAnswering)
@@ -307,12 +311,12 @@ struct HighlightCard: View {
             }
             Menu("Change Color") {
                 ForEach(HighlightKind.allCases) { kind in
-                    Button(kind.name) { model.setKind(kind, for: record) }
-                        .disabled(kind == record.kind)
+                    Toggle(kind.menuTitle, isOn: Binding(
+                        get: { record.kind == kind },
+                        set: { if $0 { model.setKind(kind, for: record) } }
+                    ))
                 }
             }
-            Button("Copy Text") { Citation.copy(record.text) }
-            Button("Copy as Quote") { Citation.copy(model.quote(for: record)) }
             Divider()
             Button("Delete Highlight", role: .destructive) { model.delete(record) }
         }
@@ -345,7 +349,7 @@ struct HighlightCard: View {
         }
     }
 
-    /// "Add note" and, for an open question, "Answer…". The row always
+    /// "Add Note" and, for an open question, "Answer…". The row always
     /// takes its space, so hovering a card doesn't push the cards below it
     /// down. It shows under the pointer, on the selected card, and when the
     /// keyboard reaches it.
@@ -357,14 +361,14 @@ struct HighlightCard: View {
             HStack(spacing: 14) {
                 if addsNote {
                     Button(action: startEditing) {
-                        Label("Add note", systemImage: "plus")
+                        Label("Add Note", systemImage: "plus")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.inkMuted)
                     }
                     .buttonStyle(.sheaf(.quiet, in: Rectangle()))
                     .focused($isAddNoteFocused)
                     .help("Add a note (\u{2325}\u{2318}N for the highlight just made)")
-                    .accessibilityLabel("Add note")
+                    .accessibilityLabel("Add Note")
                 }
                 if answers {
                     Button(action: startAnswering) {
@@ -382,14 +386,22 @@ struct HighlightCard: View {
         }
     }
 
+    /// The menu's items for VoiceOver, named as in the menu.
     @ViewBuilder
-    private var answerActions: some View {
+    private var accessibilityActions: some View {
+        Button("Copy Text") { Citation.copy(record.text) }
+        Button("Copy as Quote") { Citation.copy(model.quote(for: record)) }
+        Button(record.note.isEmpty ? "Add Note" : "Edit Note", action: startEditing)
         if record.kind == .question {
-            Button(record.isAnswered ? "Edit answer" : "Answer", action: startAnswering)
-            if record.isAnswered {
-                Button("Mark as unanswered") { model.setAnswer(record.answer, isAnswered: false, for: record) }
+            Button(record.isAnswered ? "Edit Answer" : "Answer", action: startAnswering)
+            Button(record.isAnswered ? "Mark as Unanswered" : "Mark as Answered") {
+                model.setAnswer(record.answer, isAnswered: !record.isAnswered, for: record)
             }
         }
+        ForEach(HighlightKind.allCases.filter { $0 != record.kind }) { kind in
+            Button("Change Color to \(kind.menuTitle)") { model.setKind(kind, for: record) }
+        }
+        Button("Delete Highlight") { model.delete(record) }
     }
 
     private func startAnswering() {

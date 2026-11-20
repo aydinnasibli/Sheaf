@@ -5,6 +5,16 @@ import UniformTypeIdentifiers
 extension LibraryEntry {
     /// For sorting by collection; PDFs without one sort last.
     var collectionName: String { collection?.name ?? "\u{10FFFF}" }
+
+    /// "12 pages" under the title. A PDF added from iCloud before it was
+    /// downloaded has no pages to count until it's opened.
+    var pagesLabel: String {
+        switch pageCount {
+        case 0: "Not downloaded yet"
+        case 1: "1 page"
+        default: "\(pageCount) pages"
+        }
+    }
 }
 
 /// Column widths, as fractions of the list width (from the mockup).
@@ -111,7 +121,7 @@ struct LibraryRow: View {
                                     .accessibilityLabel("Starred")
                             }
                         }
-                        Text(entry.pageCount == 1 ? "1 page" : "\(entry.pageCount) pages")
+                        Text(entry.pagesLabel)
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.inkMuted)
                     }
@@ -184,7 +194,7 @@ struct LibraryRow: View {
     private var accessibilityDetails: String {
         var parts: [String] = []
         if entry.isStarred { parts.append("Starred") }
-        parts.append(entry.pageCount == 1 ? "1 page" : "\(entry.pageCount) pages")
+        parts.append(entry.pagesLabel)
         if let collection = entry.collection { parts.append("in \(collection.name)") }
         let highlights = entry.highlights.count
         parts.append(highlights == 1 ? "1 highlight" : "\(highlights) highlights")
@@ -202,11 +212,11 @@ struct Cover: View {
             if let data, let image = NSImage(data: data) {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
             } else {
-                Color.white
+                Theme.paper
             }
         }
         .frame(width: 24, height: 30)
-        .background(.white)
+        .background(Theme.paper)
         .clipShape(RoundedRectangle(cornerRadius: 3))
         .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.control, lineWidth: 1))
         .accessibilityHidden(true)

@@ -652,12 +652,12 @@ final class ReaderModel {
             pdfView.contentFilters = filters
             // The filters apply to the background too: near-white comes out
             // a dark gray just lighter than the pages.
-            pdfView.backgroundColor = NSColor(hex: 0xFEFEFE)
+            pdfView.backgroundColor = Theme.darkPagesCanvas
             // Inverted, page shadows would glow.
             pdfView.pageShadowsEnabled = false
         } else {
             pdfView.contentFilters = []
-            pdfView.backgroundColor = NSColor(hex: isDarkMode ? 0x0F0F0F : 0xF0F0F0)
+            pdfView.backgroundColor = Theme.pageCanvas(isDark: isDarkMode)
             pdfView.pageShadowsEnabled = true
         }
     }

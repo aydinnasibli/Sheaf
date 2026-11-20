@@ -187,13 +187,20 @@ struct LibrarySidebar: View {
     }
 }
 
-/// A PDF that's open, in the "Open now" list. Click to return to it.
+/// A PDF that's open, in the "Open now" list. Click to return to it. Its
+/// close button shows under the pointer, and while the keyboard is on the
+/// row; Control-click or VoiceOver's actions close it too.
 struct OpenDocumentRow: View {
     let title: String
     let open: () -> Void
     let close: () -> Void
 
     @State private var isHovered = false
+    @FocusState private var focused: Part?
+
+    private enum Part: Hashable { case open, close }
+
+    private var showsClose: Bool { isHovered || focused != nil }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -208,16 +215,21 @@ struct OpenDocumentRow: View {
                 .frame(maxHeight: .infinity)
             }
             .buttonStyle(.sheaf(.quiet, in: Rectangle()))
+            .focused($focused, equals: .open)
             .help("Return to \u{201C}\(title)\u{201D}")
             .accessibilityLabel(title)
+            .accessibilityHint("Returns to this PDF")
+            .accessibilityAction(named: "Close \u{201C}\(title)\u{201D}", close)
             Button(action: close) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
                     .frame(width: 20, height: 20)
             }
             .buttonStyle(.sheaf(cornerRadius: 5))
-            .opacity(isHovered ? 1 : 0)
-            .animation(Theme.hoverAnimation, value: isHovered)
+            .focused($focused, equals: .close)
+            // Faded right out rather than gone, so the keyboard and VoiceOver still reach it.
+            .opacity(showsClose ? 1 : 0.001)
+            .animation(Theme.hoverAnimation, value: showsClose)
             .help("Close \u{201C}\(title)\u{201D}")
             .accessibilityLabel("Close \(title)")
         }
@@ -228,6 +240,10 @@ struct OpenDocumentRow: View {
         .background(isHovered ? Theme.hoverTint : .clear, in: RoundedRectangle(cornerRadius: 8))
         .animation(Theme.hoverAnimation, value: isHovered)
         .onHover { isHovered = $0 }
+        // Named as File › Close names it.
+        .contextMenu {
+            Button("Close \u{201C}\(title)\u{201D}", action: close)
+        }
     }
 }
 

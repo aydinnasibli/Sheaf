@@ -199,19 +199,22 @@ struct LibraryHighlightCard: View {
         .accessibilityLabel(label)
     }
 
+    /// The four colors, the highlight's checked, as in the Highlights panel.
     @ViewBuilder
     private var colorChoices: some View {
         ForEach(HighlightKind.allCases) { kind in
-            Toggle(kind.name, isOn: Binding(
+            Toggle(kind.menuTitle, isOn: Binding(
                 get: { record.kind == kind },
                 set: { if $0 { workspace.setKind(kind, forHighlight: record.id, undoManager: undoManager) } }
             ))
         }
     }
 
+    /// The same items, in the same order, as a highlight's menu in the
+    /// Highlights panel.
     @ViewBuilder
     private var menu: some View {
-        Button("Open in PDF", action: onOpen)
+        Button("Show in PDF", action: onOpen)
         Button("Copy Text") { Citation.copy(record.text) }
         Button("Copy as Quote") { Citation.copy(record.quote) }
         Divider()
@@ -227,20 +230,20 @@ struct LibraryHighlightCard: View {
         Button("Delete Highlight", role: .destructive, action: delete)
     }
 
+    /// The menu's items for VoiceOver, named as in the menu.
     @ViewBuilder
     private var accessibilityActions: some View {
-        Button("Copy as quote") { Citation.copy(record.quote) }
-        Button(record.note.isEmpty ? "Add note" : "Edit note") { startEditing(.note) }
+        Button("Copy Text") { Citation.copy(record.text) }
+        Button("Copy as Quote") { Citation.copy(record.quote) }
+        Button(record.note.isEmpty ? "Add Note" : "Edit Note") { startEditing(.note) }
         if record.kind == .question {
-            Button(record.isAnswered ? "Edit answer" : "Answer") { startEditing(.answer) }
-            if record.isAnswered {
-                Button("Mark as unanswered") { setAnswered(false) }
-            }
+            Button(record.isAnswered ? "Edit Answer" : "Answer") { startEditing(.answer) }
+            Button(record.isAnswered ? "Mark as Unanswered" : "Mark as Answered") { setAnswered(!record.isAnswered) }
         }
         ForEach(HighlightKind.allCases.filter { $0 != record.kind }) { kind in
-            Button("Make it \(kind.name)") { workspace.setKind(kind, forHighlight: record.id, undoManager: undoManager) }
+            Button("Change Color to \(kind.menuTitle)") { workspace.setKind(kind, forHighlight: record.id, undoManager: undoManager) }
         }
-        Button("Delete highlight", action: delete)
+        Button("Delete Highlight", action: delete)
     }
 
     // MARK: Editing

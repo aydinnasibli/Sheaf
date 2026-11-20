@@ -204,7 +204,7 @@ private final class BoxPreview: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = color.withAlphaComponent(0.35).cgColor
-        layer?.borderColor = (color.blended(withFraction: 0.35, of: .black) ?? color).cgColor
+        layer?.borderColor = Theme.edge(of: color).cgColor
         layer?.borderWidth = 1.5
         layer?.cornerRadius = 2
     }

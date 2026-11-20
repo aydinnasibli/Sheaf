@@ -23,6 +23,8 @@ final class ReaderWindow {
     /// The window's undo manager, so removing a PDF from its own window can
     /// be undone in the main window after that window has closed.
     @ObservationIgnored weak var undoManager: UndoManager?
+    /// The AppKit window it's shown in, once it's on screen.
+    @ObservationIgnored weak var nsWindow: NSWindow?
 
     init(kind: Kind, panels: ReaderPanels = ReaderPanels()) {
         self.kind = kind
@@ -32,10 +34,91 @@ final class ReaderWindow {
     var isMain: Bool { kind == .main }
 }
 
-extension FocusedValues {
-    /// The reading window in front, for the menu bar. Each window publishes
-    /// its own (see `ReaderWindowModifier`).
-    @Entry var readerWindow: ReaderWindow?
+/// The reading window in front: the key window, or the window that the key
+/// sheet or popover belongs to. It's `nil` while Help, Settings, an Open or
+/// Save panel, or no window at all is in front, so the menus and shortcuts
+/// for a PDF or the library leave the windows behind alone (see
+/// `SheafCommands`), and Control-Tab doesn't switch the main window's PDFs.
+@Observable
+final class FrontReaderWindow {
+    static let shared = FrontReaderWindow()
+
+    private(set) var window: ReaderWindow?
+    /// Goes up each time the menu bar opens, so the Edit menu's spelling
+    /// and substitution items show the text field's settings then.
+    private(set) var menuOpenings = 0
+
+    @ObservationIgnored private var windows: [WeakWindow] = []
+    /// Popovers' windows, and the window each points into.
+    @ObservationIgnored private var popovers: [WeakPopover] = []
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
+
+    private struct WeakWindow {
+        weak var state: ReaderWindow?
+    }
+
+    private struct WeakPopover {
+        weak var popover: NSWindow?
+        weak var owner: NSWindow?
+    }
+
+    private init() {
+        let center = NotificationCenter.default
+        // A window that's going away, or no longer key, isn't the one in
+        // front, even if AppKit hasn't picked the next one yet.
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                let leaving = name == NSWindow.didBecomeKeyNotification ? nil : (notification.object as AnyObject?).map(ObjectIdentifier.init)
+                MainActor.assumeIsolated { self?.update(leaving: leaving) }
+            })
+        }
+        observers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] notification in
+            let menu = (notification.object as AnyObject?).map(ObjectIdentifier.init)
+            MainActor.assumeIsolated {
+                guard let self, let mainMenu = NSApp.mainMenu, menu == ObjectIdentifier(mainMenu) else { return }
+                self.menuOpenings += 1
+            }
+        })
+    }
+
+    /// Called by each reading window once it knows its AppKit window.
+    func register(_ state: ReaderWindow, in window: NSWindow?) {
+        state.nsWindow = window
+        windows.removeAll { $0.state == nil || $0.state === state }
+        windows.append(WeakWindow(state: state))
+        update()
+    }
+
+    /// Called when a popover shows over a window (see `PagePopover`): typing
+    /// a note in it keeps the menus on that window.
+    func attach(popover: NSWindow?, to owner: NSWindow?) {
+        popovers.removeAll { $0.popover == nil || $0.popover === popover }
+        guard let popover, let owner else { return }
+        popovers.append(WeakPopover(popover: popover, owner: owner))
+        update()
+    }
+
+    private func update(leaving: ObjectIdentifier? = nil) {
+        var key = NSApp.keyWindow
+        if let current = key, ObjectIdentifier(current) == leaving { key = nil }
+        let found = key.flatMap(readingWindow(owning:)).flatMap { owner in
+            windows.lazy.compactMap(\.state).first { $0.nsWindow === owner }
+        }
+        if found !== window { window = found }
+    }
+
+    /// The window a sheet, alert or popover belongs to, or the window itself.
+    private func readingWindow(owning window: NSWindow) -> NSWindow {
+        var owner = window
+        // A few steps at most: a popover over a sheet over a window.
+        for _ in 0..<8 {
+            guard let next = owner.sheetParent ?? owner.parent ?? popovers.first(where: { $0.popover === owner })?.owner,
+                  next !== owner
+            else { break }
+            owner = next
+        }
+        return owner
+    }
 }
 
 extension View {
@@ -70,9 +153,9 @@ struct ReaderWindowModifier: ViewModifier {
             // pointer reaches the top of the screen, as in Preview and Books.
             .windowToolbarFullScreenVisibility(.onHover)
             .environment(state)
-            .focusedSceneValue(\.readerWindow, state)
             .background(WindowReader { window in
                 self.window = window
+                FrontReaderWindow.shared.register(state, in: window)
                 // It may have come to the front before it could say so.
                 if window?.isKeyWindow == true { workspace.frontWindow = state.kind }
             })

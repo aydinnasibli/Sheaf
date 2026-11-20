@@ -170,7 +170,7 @@ struct HighlightsPageTests {
 
     // MARK: Export
 
-    @Test func theExportIsWhatsShownByPDFThenColor() throws {
+    @Test func theExportFollowsTheOrderShown() throws {
         let thesis = store.createCollection(named: "Thesis")
         let attention = makeEntry("Attention", in: thesis)
         let contract = makeEntry("Contract")
@@ -182,38 +182,63 @@ struct HighlightsPageTests {
         store.setNote("The core idea\nof the paper", for: idea)
         store.setAnswer("It keeps gradients stable", isAnswered: true, for: question)
 
+        // Newest first, not grouped: one list, as on the page.
         let shown = try sections(HighlightFilter(kinds: [.keyIdea, .question]))
-        let markdown = HighlightsMarkdown.export(title: "Highlights", details: "From all PDFs \u{00B7} 5 highlights", sections: shown)
+        let markdown = HighlightsMarkdown.export(title: "Highlights", details: "From all PDFs \u{00B7} 4 highlights", sections: shown)
 
         #expect(markdown == """
         # Highlights
 
-        From all PDFs \u{00B7} 5 highlights
+        From all PDFs \u{00B7} 4 highlights
 
-        ## Contract
+        - Key idea: \u{201C}Clause 4\u{201D} (Contract, p. 1)
+        - Key idea: \u{201C}Scaled dot product\u{201D} (Attention, p. 2)
+          - The core idea
+            of the paper
+        - Key idea: \u{201C}Self-attention\u{201D} (Attention, p. 3)
+        - Question: \u{201C}Why softmax\u{201D} (Attention, p. 5)
+          - Answer: It keeps gradients stable
 
-        ### Key idea
+        """)
+        #expect(!markdown.contains("Hidden evidence"))
+    }
 
-        - \u{201C}Clause 4\u{201D} (Contract, p. 1)
+    @Test func theExportKeepsTheGroupsShown() throws {
+        let thesis = store.createCollection(named: "Thesis")
+        let attention = makeEntry("Attention", in: thesis)
+        let contract = makeEntry("Contract")
+        let question = add("Why softmax", to: attention, page: 4, kind: .question, minute: 1)
+        add("Self-attention", to: attention, page: 2, kind: .keyIdea, minute: 2)
+        add("Scaled dot product", to: attention, page: 1, kind: .keyIdea, minute: 3)
+        add("Clause 4", to: contract, page: 0, kind: .keyIdea, minute: 5)
+        store.setAnswer("", isAnswered: true, for: question)
+
+        // In reading order, grouped by PDF: each PDF under its heading.
+        let grouped = try sections(order: .readingOrder, groupsByPDF: true)
+        #expect(HighlightsMarkdown.export(title: "Highlights", details: "From all PDFs", sections: grouped) == """
+        # Highlights
+
+        From all PDFs
 
         ## Attention
 
         Collection: Thesis
 
-        ### Key idea
+        - Key idea: \u{201C}Scaled dot product\u{201D} (Attention, p. 2)
+        - Key idea: \u{201C}Self-attention\u{201D} (Attention, p. 3)
+        - Question: \u{201C}Why softmax\u{201D} (Attention, p. 5)
+          - Answered
 
-        - \u{201C}Scaled dot product\u{201D} (Attention, p. 2)
-          - The core idea
-            of the paper
-        - \u{201C}Self-attention\u{201D} (Attention, p. 3)
+        ## Contract
 
-        ### Question
-
-        - \u{201C}Why softmax\u{201D} (Attention, p. 5)
-          - Answer: It keeps gradients stable
+        - Key idea: \u{201C}Clause 4\u{201D} (Contract, p. 1)
 
         """)
-        #expect(!markdown.contains("Hidden evidence"))
+
+        // With one color shown, the highlights don't each repeat it.
+        let ideas = try sections(HighlightFilter(kinds: [.keyIdea]), order: .readingOrder)
+        let markdown = HighlightsMarkdown.export(title: "Highlights", details: "Key idea", sections: ideas)
+        #expect(markdown.contains("\n- \u{201C}Scaled dot product\u{201D} (Attention, p. 2)\n- \u{201C}Self-attention\u{201D} (Attention, p. 3)\n- \u{201C}Clause 4\u{201D} (Contract, p. 1)\n"))
     }
 
     @Test func theNotesExportHasSummariesAndPageNotes() throws {
@@ -221,7 +246,7 @@ struct HighlightsPageTests {
         entry.summary = "About attention."
         let record = add("Self-attention", to: entry, page: 0, minute: 1)
         store.setNote("Key", for: record)
-        let note = store.addPageNote(to: entry, pageIndex: 2, text: "The diagram")
+        let note = store.addPageNote(to: entry, pageIndex: 2, text: "The diagram", createdAt: start.addingTimeInterval(120))
 
         let shown = HighlightList.sections(
             highlights: [record], pageNotes: [note], summaries: [entry], order: .readingOrder, groupsByPDF: true
@@ -229,13 +254,14 @@ struct HighlightsPageTests {
         #expect(texts(shown) == ["summary: Attention", "Self-attention", "note: The diagram"])
 
         let markdown = HighlightsMarkdown.export(title: "Notes", details: "From all PDFs", sections: shown)
-        #expect(markdown.contains("## Attention\n\n### My summary\n\nAbout attention.\n\n### Key idea\n\n"))
-        #expect(markdown.contains("### Page notes\n\n- The diagram (Attention, p. 3)\n"))
+        #expect(markdown.contains("## Attention\n\n**My summary:** About attention.\n\n- \u{201C}Self-attention\u{201D} (Attention, p. 1)\n  - Key\n- Page note: The diagram (Attention, p. 3)\n"))
 
-        // Not grouped, summaries come first under their own heading.
+        // Not grouped, summaries come first under their own heading, as on the page.
         let flat = HighlightList.sections(
             highlights: [record], pageNotes: [note], summaries: [entry], order: .newestFirst, groupsByPDF: false
         )
         #expect(flat.map(\.title) == ["Summaries", "Notes"])
+        let flatMarkdown = HighlightsMarkdown.export(title: "Notes", details: "From all PDFs", sections: flat)
+        #expect(flatMarkdown.contains("## Summaries\n\n- **Attention:** About attention.\n\n## Notes\n\n- Page note: The diagram (Attention, p. 3)\n- \u{201C}Self-attention\u{201D} (Attention, p. 1)\n"))
     }
 }

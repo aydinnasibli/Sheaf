@@ -25,7 +25,7 @@ struct PanelOverlay<Panel: View>: View {
             .frame(maxHeight: .infinity)
             // One shadow for the whole panel, not one per card inside it.
             .compositingGroup()
-            .shadow(color: .black.opacity(0.16), radius: 18, x: edge == .leading ? 4 : -4)
+            .shadow(color: Theme.panelShadow, radius: 18, x: edge == .leading ? 4 : -4)
             .onExitCommand(perform: dismiss)
         }
     }

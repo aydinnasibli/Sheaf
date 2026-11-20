@@ -55,7 +55,7 @@ struct PageNoteCard: View {
                     .help("Edit this page\u{2019}s note")
                     .accessibilityLabel("Note on page \(label): \(note.text)")
                     .accessibilityHint("Edits the note")
-                    .accessibilityAction(named: "Delete note") { model.deletePageNote(note) }
+                    .accessibilityAction(named: "Delete Page Note") { model.deletePageNote(note) }
                 }
             }
             Spacer(minLength: 0)
@@ -90,11 +90,11 @@ struct PageNoteCard: View {
         }
         .contextMenu {
             if let note {
-                Button("Edit Note", action: startEditing)
+                Button("Edit Page Note", action: startEditing)
                 Button("Go to Page \(label)") { model.goToPage(number: page + 1) }
                 Button("Copy Text") { Citation.copy(note.text) }
                 Divider()
-                Button("Delete Note", role: .destructive) { model.deletePageNote(note) }
+                Button("Delete Page Note", role: .destructive) { model.deletePageNote(note) }
             }
         }
     }

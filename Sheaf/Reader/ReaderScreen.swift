@@ -124,9 +124,14 @@ struct ReaderLayout: View {
     private var panels: ReaderPanels { readerWindow.panels }
 
     // What the header shows at each width, so nothing is pushed into the
-    // toolbar's overflow menu, down to half a laptop screen. Below each
-    // width the control goes, in this order; the menus and shortcuts still
-    // do what it does.
+    // toolbar's overflow menu, down to half a laptop screen (680). Below
+    // each width the control goes, or gets shorter, in this order; the
+    // menus and shortcuts still do what it does. Even with the widest of
+    // each (a picked pen's name, "Two-page scroll", "541–542 (301–302 of
+    // 600)"), the title keeps `minimumTitleWidth` at every width.
+
+    /// "xii (14 of 244)" in the page pill; below, only "xii".
+    private var showsFullPageNumber: Bool { width >= 1600 }
     private var showsPenNames: Bool { width >= 1540 }
     private var showsZoom: Bool { width >= 1300 }
     private var showsLayoutSwitch: Bool { width >= 1100 }
@@ -135,15 +140,17 @@ struct ReaderLayout: View {
     private var showsSearchButton: Bool { width >= 760 }
     /// The highlighters and the controls on the right at their full size
     /// (they never shrink), as last laid out.
-    @State private var penPickerWidth: CGFloat = 204
-    @State private var controlsWidth: CGFloat = 250
+    @State private var penPickerWidth: CGFloat = 135
+    @State private var controlsWidth: CGFloat = 180
+    /// About ten characters of the title.
+    private static let minimumTitleWidth: CGFloat = 90
     /// The title gets the header's spare room: the window less the traffic
     /// lights, the two buttons beside the title (one in a PDF's own window),
     /// the other controls and the gaps between them. In a narrow window it's
     /// cut short (the menu's tooltip and Rename… show all of it).
     private var titleWidth: CGFloat {
         let leading: CGFloat = readerWindow.isMain ? 236 : 196
-        return min(280, max(90, width - leading - penPickerWidth - controlsWidth))
+        return min(280, max(Self.minimumTitleWidth, width - leading - penPickerWidth - controlsWidth))
     }
 
     var body: some View {
@@ -205,11 +212,16 @@ struct ReaderLayout: View {
             model.startBackgroundWork()
             // Esc acts on the window the PDF is in now, which changes when
             // it moves to its own window or back.
-            model.pdfView.onEscape = { [readerWindow] in
-                // Esc first puts away a panel shown over the page.
+            model.pdfView.onEscape = { [readerWindow, weak model] in
+                // Esc first puts away a panel shown over the page, then
+                // leaves focus mode, then puts down the picked highlighter.
                 if readerWindow.panels.closeOverlay() { return true }
-                guard readerWindow.isFocusMode else { return false }
-                readerWindow.isFocusMode = false
+                if readerWindow.isFocusMode {
+                    readerWindow.isFocusMode = false
+                    return true
+                }
+                guard let model, model.activePen != nil else { return false }
+                model.activePen = nil
                 return true
             }
         }
@@ -275,7 +287,7 @@ struct ReaderLayout: View {
                                 .overlay(Capsule().strokeBorder(Theme.control, lineWidth: 1))
                         }
                         .buttonStyle(.sheaf(.overlay, in: Capsule()))
-                        .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+                        .shadow(color: Theme.floatingShadow, radius: 10, y: 3)
                         .help("Go back to where you were (\u{2318}[)")
                         .padding(14)
                         .transition(.opacity)
@@ -297,7 +309,7 @@ struct ReaderLayout: View {
                             .padding(.vertical, 9)
                             .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.control))
-                            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+                            .shadow(color: Theme.floatingShadow, radius: 12, y: 4)
                             .transition(.opacity)
                     }
                 }
@@ -348,7 +360,7 @@ struct ReaderLayout: View {
                 if showsLayoutSwitch {
                     LayoutSwitch(model: model)
                 }
-                PagePill(model: model)
+                PagePill(model: model, isCompact: !showsFullPageNumber)
                 if showsZoom {
                     ZoomPill(model: model)
                 }

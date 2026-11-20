@@ -46,7 +46,7 @@ struct PenPicker: View {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(kind.swatch)
                             .frame(width: 14, height: 14)
-                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.black.opacity(0.12), lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.swatchEdge, lineWidth: 1))
                         if showsName {
                             Text(kind.name)
                                 .font(.system(size: 12.5, weight: .semibold))
@@ -125,6 +125,10 @@ struct LayoutSwitch: View {
 
 struct PagePill: View {
     let model: ReaderModel
+    /// In a narrower window, only the page number: "xii" rather than
+    /// "xii (14 of 244)", and "14–15" rather than "14–15 / 244" with two
+    /// pages on screen. The tooltip and VoiceOver still have all of it.
+    var isCompact = false
 
     var body: some View {
         let sideways = model.layout == .twoPages
@@ -140,7 +144,7 @@ struct PagePill: View {
                     .frame(height: 30)
             }
             .buttonStyle(.sheaf(cornerRadius: 7))
-            .help("Go to page (\u{2325}\u{2318}G)")
+            .help(isCompact ? "\(spokenPage). Go to another page (\u{2325}\u{2318}G)" : "Go to page (\u{2325}\u{2318}G)")
             .accessibilityLabel(spokenPage)
             .accessibilityHint("Goes to a page")
             PillIconButton(label: "Next page", systemImage: sideways ? "chevron.right" : "chevron.down", isEnabled: model.canGoToNextPage) {
@@ -160,7 +164,9 @@ struct PagePill: View {
     /// "xii (14 of 244)", as Acrobat shows it.
     private var pageText: Text {
         let label = Text(model.pageLabel).fontWeight(.semibold).foregroundStyle(Theme.ink)
-        guard model.pageLabel != model.pagePosition else {
+        let isLabeled = model.pageLabel != model.pagePosition
+        if isCompact && (isLabeled || model.visiblePageIndices.count > 1) { return label }
+        guard isLabeled else {
             return label + Text(" / \(model.pageCount)").foregroundStyle(Theme.inkMuted)
         }
         return label + Text(" (\(model.pagePosition) of \(model.pageCount))").foregroundStyle(Theme.inkMuted)

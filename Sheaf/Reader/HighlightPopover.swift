@@ -35,6 +35,8 @@ final class PagePopover: NSObject, NSPopoverDelegate {
         self.onClose = onClose
         follow(view)
         popover.show(relativeTo: rect, of: view, preferredEdge: edge)
+        // While she types in it, the menus still act on this window.
+        FrontReaderWindow.shared.attach(popover: host.view.window, to: view.window)
     }
 
     /// Closes the popover and runs its `onClose` right away (the popover
@@ -102,9 +104,9 @@ final class NoteDraft {
 }
 
 /// The popover at a highlight clicked on the page: a note, the four colors,
-/// the answer for a question, Copy, Copy as Quote and Delete. It looks the
-/// highlight up by ID each time, so it never touches one that was just
-/// deleted (by Undo, say).
+/// the answer for a question, Copy Text, Copy as Quote and Delete Highlight.
+/// It looks the highlight up by ID each time, so it never touches one that
+/// was just deleted (by Undo, say).
 struct HighlightPopoverView: View {
     let model: ReaderModel
     let id: UUID
@@ -146,7 +148,7 @@ struct HighlightPopoverView: View {
             Hairline()
 
             HStack(spacing: 6) {
-                PopoverButton(title: "Copy", systemImage: "doc.on.doc") {
+                PopoverButton(title: "Copy Text", systemImage: "doc.on.doc") {
                     if let record { Citation.copy(record.text) }
                     dismiss()
                 }
@@ -157,7 +159,7 @@ struct HighlightPopoverView: View {
                 }
                 .help("Copy it in quotes, with the title and page (\u{21E7}\u{2318}C)")
                 Spacer(minLength: 8)
-                PopoverButton(title: "Delete", systemImage: "trash", isIconOnly: true) {
+                PopoverButton(title: "Delete Highlight", systemImage: "trash", isIconOnly: true) {
                     draft.isCancelled = true
                     let record = record
                     dismiss()
@@ -198,7 +200,7 @@ struct HighlightPopoverView: View {
         } else if record.isAnswered {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 AnswerLine(answer: record.answer, tint: record.kind.chipText, font: .system(size: 13))
-                PopoverButton(title: "Edit", systemImage: "pencil", isIconOnly: true) { startAnswering(record) }
+                PopoverButton(title: "Edit Answer", systemImage: "pencil", isIconOnly: true) { startAnswering(record) }
                     .help("Edit the answer")
                 PopoverButton(title: "Mark as Unanswered", systemImage: "arrow.uturn.backward", isIconOnly: true) {
                     model.setAnswer(record.answer, isAnswered: false, for: record)
@@ -242,7 +244,7 @@ struct PageNotePopoverView: View {
             if let note = model.pageNote(onPage: pageIndex) {
                 HStack {
                     Spacer()
-                    PopoverButton(title: "Delete Note", systemImage: "trash") {
+                    PopoverButton(title: "Delete Page Note", systemImage: "trash") {
                         draft.isCancelled = true
                         model.deletePageNote(note)
                         dismiss()
@@ -302,7 +304,7 @@ private struct ColorButton: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(kind.swatch)
                 .frame(width: 22, height: 22)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.black.opacity(0.12), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.swatchEdge, lineWidth: 1))
                 .padding(3)
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? Theme.accent : .clear, lineWidth: 2))
         }

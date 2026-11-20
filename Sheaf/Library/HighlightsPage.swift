@@ -103,7 +103,7 @@ struct HighlightsPage: View {
                 SecondaryButton(title: "Export as Markdown\u{2026}", systemImage: "square.and.arrow.down") {
                     export(sections)
                 }
-                .help("Save what\u{2019}s shown here as a Markdown file, by PDF and by color, with your notes and answers")
+                .help("Save what\u{2019}s shown here as a Markdown file, in the same order, with your notes and answers")
                 .disabled(sections.isEmpty)
             }
 
@@ -133,10 +133,10 @@ struct HighlightsPage: View {
                 list(sections)
             }
         }
-        .padding(.horizontal, 32)
-        .padding(.top, 26)
+        // The room for the cards, inside the page's margins.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width - 64 } action: { width = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .libraryPage()
         // Open and Answered are for questions; without them, all are shown.
         .onChange(of: kinds) { if !kinds.contains(.question) { status = .all } }
         // File › Export as Markdown.
@@ -409,7 +409,7 @@ struct HighlightsPage: View {
         .accessibilityLabel("Page note: \(note.text). \(title), page \(note.displayPage)")
         .help("Open \u{201C}\(title)\u{201D} at page \(note.displayPage)")
         .contextMenu {
-            Button("Open in PDF") { if let entry = note.entry { onOpenPDF(entry, note.pageIndex) } }
+            Button("Show in PDF") { if let entry = note.entry { onOpenPDF(entry, note.pageIndex) } }
             Button("Copy Text") { Citation.copy(note.text) }
         }
     }

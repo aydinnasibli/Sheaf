@@ -11,15 +11,15 @@ struct PDFMenuItems: View {
     /// The File menu's version: every item stays in place (disabled when it
     /// doesn't apply) and has its keyboard shortcut.
     var isMenuBar = false
-    /// The window the File menu acts on. The context menu is in the main
-    /// window's library.
+    /// The window the File menu acts on (`nil` while Help or Settings is in
+    /// front). The context menu is in the main window's library.
     var readerWindow: ReaderWindow?
 
     var body: some View {
         let isEmpty = entries.isEmpty
         // Shortcuts that mean something else in a text field work only
         // while the list has focus, as in Finder.
-        let listShortcuts = isMenuBar && workspace.isLibraryListFocused && isLibraryOnScreen
+        let listShortcuts = isMenuBar && readerWindow != nil && workspace.isLibraryListFocused && isLibraryOnScreen
         if isLibraryOnScreen {
             Button(openTitle) { workspace.openPDFs(entries) }
                 .keyboardShortcut(listShortcuts ? KeyboardShortcut(.downArrow, modifiers: .command) : nil)

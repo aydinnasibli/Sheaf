@@ -203,11 +203,11 @@ struct ThumbnailCell: View {
                     if let shown {
                         Image(nsImage: shown).resizable().aspectRatio(contentMode: .fit)
                     } else {
-                        Color.white
+                        Theme.paper
                     }
                 }
                 .frame(width: size.width, height: size.height)
-                .background(.white)
+                .background(Theme.paper)
                 .colorInvert(isDarkPage)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 // The current page has the accent ring; the page under the pointer a lighter one.
@@ -217,7 +217,7 @@ struct ThumbnailCell: View {
                         lineWidth: 2
                     )
                 )
-                .shadow(color: .black.opacity(isCurrent ? 0 : 0.14), radius: 2, y: 1)
+                .shadow(color: isCurrent ? .clear : Theme.thumbnailShadow, radius: 2, y: 1)
                 .animation(Theme.hoverAnimation, value: isHovered)
                 .overlay(alignment: .topLeading) {
                     // A ribbon beside bookmarked pages, in the margin so it

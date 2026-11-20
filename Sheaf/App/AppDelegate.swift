@@ -11,21 +11,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         DebugSnapshot.start()
         #endif
-        // Control-Tab / Control-Shift-Tab switch between the library and open
-        // PDFs in the main window. macOS normally uses Control-Tab to move
-        // focus between controls, so catch it before that happens.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard event.keyCode == 48, modifiers == .control || modifiers == [.control, .shift] else { return event }
+                .subtracting([.numericPad, .function, .capsLock])
             let handled = MainActor.assumeIsolated {
-                guard let workspace = WindowRouter.shared.workspace else { return false }
-                // In a PDF's own window it's left to macOS, which switches
-                // tabs with it once windows are merged.
-                guard workspace.frontWindow == .main else { return false }
-                if !workspace.documents.isEmpty {
-                    if modifiers.contains(.shift) { workspace.selectPrevious() } else { workspace.selectNext() }
+                if event.keyCode == 48, modifiers == .control || modifiers == [.control, .shift] {
+                    return Self.switchOpenPDF(backward: modifiers.contains(.shift))
                 }
-                return true
+                if modifiers == .command, event.charactersIgnoringModifiers == "=" {
+                    return Self.zoomIn()
+                }
+                return false
             }
             return handled ? nil : event
         }
@@ -33,6 +29,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Once the window is up.
             Task { SafetyAlerts.showLibraryCouldNotOpen() }
         }
+    }
+
+    /// Control-Tab / Control-Shift-Tab switch between the library and open
+    /// PDFs in the main window. macOS normally uses Control-Tab to move
+    /// focus between controls, so it's caught before that happens. Returns
+    /// false to leave it to macOS: in a PDF's own window it switches tabs
+    /// once windows are merged, and in Help or Settings it moves the focus.
+    private static func switchOpenPDF(backward: Bool) -> Bool {
+        guard let workspace = WindowRouter.shared.workspace,
+              FrontReaderWindow.shared.window?.isMain == true
+        else { return false }
+        if !workspace.documents.isEmpty {
+            if backward { workspace.selectPrevious() } else { workspace.selectNext() }
+        }
+        return true
+    }
+
+    /// ⌘= zooms in, like View › Zoom In (⌘+), which on most keyboards
+    /// needs Shift. A menu item can have only one shortcut, so it's here.
+    private static func zoomIn() -> Bool {
+        guard let window = FrontReaderWindow.shared.window,
+              let reader = WindowRouter.shared.workspace?.document(in: window)?.model
+        else { return false }
+        reader.zoomIn()
+        return true
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {

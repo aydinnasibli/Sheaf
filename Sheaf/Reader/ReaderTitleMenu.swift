@@ -12,22 +12,34 @@ struct ReaderTitleMenu: View {
     @State private var anchor: NSView?
 
     var body: some View {
+        if let entry = model.entry, entry.isInLibrary {
+            menu(for: entry)
+        } else {
+            // Removed from the library while open: nothing to rename, share
+            // or move, so the title is just the title.
+            TitleBlock(model: model)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .help("\u{201C}\(model.title)\u{201D} is no longer in your library")
+                .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func menu(for entry: LibraryEntry) -> some View {
         Menu {
-            if let entry = model.entry, entry.isInLibrary {
-                Button("Rename\u{2026}") { workspace.requestRename(entry) }
-                Button("Show in Finder") { workspace.showInFinder([entry]) }
-                Button("Share\u{2026}") { workspace.share([entry], from: anchor) }
-                Divider()
-                // To read it beside another PDF, and back.
-                if readerWindow.isMain {
-                    Button("Open in New Window") { workspace.openInNewWindow(entry) }
-                } else {
-                    Button("Move to Main Window") { workspace.moveToMainWindow(entry.id) }
-                }
-                Divider()
-                Section("Location") {
-                    location(of: URL(filePath: entry.lastKnownPath))
-                }
+            Button("Rename\u{2026}") { workspace.requestRename(entry) }
+            Button("Show in Finder") { workspace.showInFinder([entry]) }
+            Button("Share\u{2026}") { workspace.share([entry], from: anchor) }
+            Divider()
+            // To read it beside another PDF, and back.
+            if readerWindow.isMain {
+                Button("Open in New Window") { workspace.openInNewWindow(entry) }
+            } else {
+                Button("Move to Main Window") { workspace.moveToMainWindow(entry.id) }
+            }
+            Divider()
+            Section("Location") {
+                location(of: URL(filePath: entry.lastKnownPath))
             }
         } label: {
             HStack(spacing: 6) {

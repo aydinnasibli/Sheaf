@@ -97,7 +97,7 @@ final class RecognizedMatchOverlay: NSObject, PDFPageOverlayViewProvider {
                 mark.backgroundColor = NSColor.findHighlightColor.withAlphaComponent(opacity).cgColor
                 mark.cornerRadius = 2
                 if outlined {
-                    mark.borderColor = (NSColor.findHighlightColor.blended(withFraction: 0.5, of: .black) ?? .black).cgColor
+                    mark.borderColor = Theme.edge(of: .findHighlightColor, darkness: 0.5).cgColor
                     mark.borderWidth = 1.5
                 }
                 layer.addSublayer(mark)

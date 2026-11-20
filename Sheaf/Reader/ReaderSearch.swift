@@ -45,7 +45,7 @@ struct FindBar: View {
         .frame(height: 40)
         .background(Theme.raised, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.control, lineWidth: 1))
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        .shadow(color: Theme.floatingShadow, radius: 12, y: 4)
     }
 
     private var status: String {

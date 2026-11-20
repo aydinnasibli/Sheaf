@@ -24,9 +24,7 @@ struct ReviewPage: View {
                 ReviewSetup(highlights: highlights, entries: entries, collections: collections)
             }
         }
-        .padding(.horizontal, 32)
-        .padding(.top, 26)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .libraryPage()
     }
 }
 
@@ -240,7 +238,7 @@ private struct DeckPicture: View {
                     .frame(width: 150, height: 100)
                     .rotationEffect(.degrees([-7, 4, 0][layer]))
                     .offset(x: [-10, 10, 0][layer], y: [4, 2, -4][layer])
-                    .shadow(color: .black.opacity(0.05), radius: 6, y: 2)
+                    .shadow(color: Theme.cardShadow, radius: 6, y: 2)
             }
         }
         .frame(width: 190, height: 130)
@@ -418,7 +416,7 @@ private struct FlashCard: View {
                     .overlay(alignment: .top) { Rectangle().fill(card.kind.swatch).frame(height: 6) }
                     .clipShape(RoundedRectangle(cornerRadius: 18))
                     .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.control, lineWidth: 1))
-                    .shadow(color: .black.opacity(0.07), radius: 22, y: 8)
+                    .shadow(color: Theme.cardShadow, radius: 22, y: 8)
             }
         }
         .buttonStyle(.sheaf(.overlay, cornerRadius: 18))

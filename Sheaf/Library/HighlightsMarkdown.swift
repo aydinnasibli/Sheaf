@@ -2,51 +2,49 @@ import AppKit
 import UniformTypeIdentifiers
 
 /// The Highlights and Notes pages as Markdown: exactly what the page shows,
-/// grouped by PDF and then by color, cited the way Copy as Quote cites.
-/// Notes and answers go under their highlight.
+/// in the same order and under the same headings (a PDF's when grouped by
+/// PDF, "Summaries" and "Notes" on the Notes page), cited the way Copy as
+/// Quote cites. Each highlight says its color, unless all of them are one
+/// color; notes and answers go under their highlight.
 enum HighlightsMarkdown {
     /// `title` is the page's ("Highlights", "Notes"); `details` says what
     /// was shown, like "From “Thesis” · Question · Open questions only".
     static func export(title: String, details: String, sections: [HighlightSection]) -> String {
         let items = sections.flatMap(\.items)
+        let showsColors = Set(sections.flatMap(\.highlights).map(\.kind)).count > 1
         var lines = ["# \(title)", "", details, ""]
-        for entry in HighlightList.pdfs(in: sections) {
-            let mine = items.filter { $0.entry?.id == entry.id }
-            lines.append("## \(entry.title)")
-            lines.append("")
-            if let collection = entry.collection {
-                lines += ["Collection: \(collection.name)", ""]
+        for section in sections {
+            if let entry = section.entry {
+                lines += ["## \(entry.title)", ""]
+                if let collection = entry.collection {
+                    lines += ["Collection: \(collection.name)", ""]
+                }
+            } else if let heading = section.title {
+                lines += ["## \(heading)", ""]
             }
-            if mine.contains(where: { if case .summary = $0 { true } else { false } }) {
-                lines += ["### My summary", "", entry.summary, ""]
-            }
-            let highlights = mine.compactMap { if case .highlight(let record) = $0 { record } else { nil } }
-            for kind in HighlightKind.allCases {
-                let ofKind = highlights.filter { $0.kind == kind }
-                    .sorted { HighlightList.readingOrder(.highlight($0), .highlight($1)) }
-                guard !ofKind.isEmpty else { continue }
-                lines += ["### \(kind.name)", ""]
-                for record in ofKind {
-                    lines.append("- " + record.quote)
+            // A summary heads its PDF's group; elsewhere it's an item like the others.
+            var list: [String] = []
+            for item in section.items {
+                switch item {
+                case .summary(let entry) where section.entry != nil:
+                    lines += ["**My summary:** " + entry.summary, ""]
+                case .summary(let entry):
+                    list.append("- **\(entry.title):** " + continued(entry.summary, indent: "  "))
+                case .highlight(let record):
+                    let color = showsColors ? "\(record.kind.name): " : ""
+                    list.append("- " + color + record.quote)
                     if !record.note.isEmpty {
-                        lines.append("  - " + continued(record.note, indent: "    "))
+                        list.append("  - " + continued(record.note, indent: "    "))
                     }
                     if record.isAnsweredQuestion {
-                        lines.append("  - " + answer(record.answer, indent: "    "))
+                        list.append("  - " + answer(record.answer, indent: "    "))
                     }
+                case .page(let note):
+                    let source = Citation.source(title: note.entry?.title ?? "PDF", page: note.displayPage)
+                    list.append("- Page note: " + continued(note.text, indent: "  ") + " (\(source))")
                 }
-                lines.append("")
             }
-            let notes = mine.compactMap { if case .page(let note) = $0 { note } else { nil } }
-                .sorted { ($0.pageIndex, $0.createdAt) < ($1.pageIndex, $1.createdAt) }
-            if !notes.isEmpty {
-                lines += ["### Page notes", ""]
-                for note in notes {
-                    let source = Citation.source(title: entry.title, page: note.displayPage)
-                    lines.append("- " + continued(note.text, indent: "  ") + " (\(source))")
-                }
-                lines.append("")
-            }
+            if !list.isEmpty { lines += list + [""] }
         }
         if items.isEmpty {
             lines.append("Nothing to export.")

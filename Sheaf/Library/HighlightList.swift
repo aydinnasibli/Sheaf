@@ -220,12 +220,6 @@ enum HighlightList {
         case .orderedSame: a.addedAt == b.addedAt ? a.id.uuidString < b.id.uuidString : a.addedAt < b.addedAt
         }
     }
-
-    /// The PDFs in the order their cards first appear.
-    static func pdfs(in sections: [HighlightSection]) -> [LibraryEntry] {
-        var seen = Set<UUID>()
-        return sections.flatMap(\.items).compactMap(\.entry).filter { seen.insert($0.id).inserted }
-    }
 }
 
 private extension HighlightItem {
