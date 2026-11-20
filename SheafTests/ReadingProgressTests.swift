@@ -5,7 +5,8 @@ import SwiftData
 import Testing
 @testable import Sheaf
 
-/// "Furthest page read" moves on by reading, not by jumping.
+/// Pages count as read by reading, not by jumping, and a page that counts
+/// after a while on screen counts on its own.
 @MainActor
 struct ReadingProgressTests {
     private let container: ModelContainer
@@ -18,7 +19,7 @@ struct ReadingProgressTests {
 
     /// A reader for a PDF of `pageCount` pages, its page view in a window
     /// (never shown) so pages can be turned, one page at a time.
-    private func makeReader(pageCount: Int) throws -> (ReaderModel, LibraryEntry, NSWindow) {
+    private func makeReader(pageCount: Int, layout: ReaderModel.PageLayout = .single) throws -> (ReaderModel, LibraryEntry, NSWindow) {
         let document = TestPDF.make(pages: (1...pageCount).map { "Page \($0)" })
         let entry = LibraryEntry(title: "Paper", path: "/tmp/Paper-\(UUID()).pdf", pageCount: pageCount)
         container.mainContext.insert(entry)
@@ -26,7 +27,7 @@ struct ReadingProgressTests {
         let model = ReaderModel(document: document, entry: entry, store: store, fileURL: nil, preferences: preferences)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 500), styleMask: [.titled], backing: .buffered, defer: true)
         window.contentView = model.pdfView
-        model.layout = .single
+        model.layout = layout
         model.restoreReadingPosition()
         return (model, entry, window)
     }
@@ -37,18 +38,37 @@ struct ReadingProgressTests {
         try await waitUntil { model.currentPageIndex == next }
     }
 
+    @Test func aPDFNeverOpenedHasReadNothing() {
+        let entry = LibraryEntry(title: "Paper", path: "/tmp/Two pages.pdf", pageCount: 2)
+        #expect(entry.progress == 0)
+        #expect(entry.readingStatus == .unread)
+    }
+
     @Test func turningPagesCountsAsReading() async throws {
         let (model, entry, window) = try makeReader(pageCount: 4)
         defer { window.contentView = nil }
 
+        // Reading on from the first page counts it too.
         try await turnPage(model)
-        #expect(entry.furthestPageIndex == 1)
+        #expect(entry.readPages == [0, 1])
         try await turnPage(model)
         try await turnPage(model)
 
         // Finished: she read her way to the last page.
-        #expect(entry.furthestPageIndex == 3)
+        #expect(entry.readPages == [0, 1, 2, 3])
         #expect(entry.readingStatus == .finished)
+        #expect(entry.progress == 1)
+    }
+
+    @Test func turningSpreadsCountsBothPages() async throws {
+        let (model, entry, window) = try makeReader(pageCount: 6, layout: .twoPages)
+        defer { window.contentView = nil }
+        #expect(model.visiblePageIndices == [0, 1])
+
+        model.goToNextPage()
+        try await waitUntil { model.visiblePageIndices == [2, 3] }
+
+        #expect(entry.readPages == [0, 1, 2, 3])
     }
 
     @Test func jumpingToTheEndDoesntFinishThePDF() async throws {
@@ -59,36 +79,41 @@ struct ReadingProgressTests {
         // Following a link to the references on the last page.
         model.goToPage(number: 6)
         try await waitUntil { model.currentPageIndex == 5 }
-        #expect(entry.furthestPageIndex == 1)
+        #expect(entry.readPages == [0, 1])
         #expect(entry.lastPageIndex == 5, "It still opens where she was")
         #expect(entry.readingStatus == .inProgress)
 
         // Looking around near where she jumped to doesn't count either.
         model.goToPreviousPage()
         try await waitUntil { model.currentPageIndex == 4 }
-        #expect(entry.furthestPageIndex == 1)
+        #expect(entry.readPages == [0, 1])
 
         // Back where she was, reading on counts again.
         model.goBack()
         try await waitUntil { model.currentPageIndex == 1 }
         try await turnPage(model)
-        #expect(entry.furthestPageIndex == 2)
+        #expect(entry.readPages == [0, 1, 2])
     }
 
-    @Test func aPageJumpedToCountsOnceItHasBeenOnScreenAWhile() async throws {
+    @Test func aPageJumpedToCountsOnItsOwnOnceItHasBeenOnScreenAWhile() async throws {
         let (model, entry, window) = try makeReader(pageCount: 5)
         defer { window.contentView = nil }
         model.readingDwell = .milliseconds(150)
 
         model.goToPage(number: 4)
         try await waitUntil { model.currentPageIndex == 3 }
-        #expect(entry.furthestPageIndex == 0)
+        #expect(entry.readPages.isEmpty)
 
-        try await waitUntil { entry.furthestPageIndex == 3 }
+        try await waitUntil { entry.hasRead(3) }
+        // That page only: not the pages before it.
+        #expect(entry.readPages == [3])
+
         // From there, reading on counts.
         try await turnPage(model)
-        #expect(entry.furthestPageIndex == 4)
-        #expect(entry.readingStatus == .finished)
+        #expect(entry.readPages == [3, 4])
+        // On the last page, but she skipped the first three.
+        #expect(entry.readingStatus == .inProgress)
+        #expect(entry.progress == 0.4)
     }
 
     @Test func aPageLeftQuicklyDoesntCount() async throws {
@@ -102,34 +127,53 @@ struct ReadingProgressTests {
         try await waitUntil { model.currentPageIndex == 0 }
         try await Task.sleep(for: .milliseconds(500))
 
-        #expect(entry.furthestPageIndex == 0)
+        #expect(!entry.hasRead(4))
+        #expect(entry.readingStatus != .finished)
     }
 
     @Test func readingStepsAndJumps() {
         var progress = ReadingProgress()
-        /// Whether arriving at `page` counts as reading it.
-        func reads(_ page: Int, furthest: Int, now: ContinuousClock.Instant = .now) -> Bool {
-            progress.arrive(at: page, furthestRead: furthest, now: now)
+        var read = Set<Int>()
+        /// The pages that arriving at `pages` counts as read.
+        func arrive(_ pages: [Int], now: ContinuousClock.Instant = .now) -> [Int] {
+            let counted = progress.arrive(at: pages, hasRead: { read.contains($0) }, now: now)
+            read.formUnion(counted)
+            return counted
         }
 
-        progress.start(at: 0)
-        #expect(reads(1, furthest: 0))
+        progress.start(at: [0])
+        // Reading on from the start of the PDF counts both pages.
+        #expect(arrive([1]) == [0, 1])
         // Two pages at once is a spread in the two-page layouts.
-        #expect(reads(3, furthest: 1))
+        #expect(arrive([3]) == [1, 2, 3])
         // Dragging the scroll bar to the end, or pressing End.
-        #expect(!reads(40, furthest: 3))
+        #expect(arrive([40]).isEmpty)
         // On from a page she hadn't read.
-        #expect(!reads(41, furthest: 3))
+        #expect(arrive([41]).isEmpty)
+        // Back a page isn't reading on.
+        #expect(arrive([40]).isEmpty)
 
-        progress.start(at: 3)
+        progress.start(at: [3])
         progress.jumpStarting()
-        #expect(!reads(4, furthest: 3), "Even a jump to the next page isn't reading")
-        // The jump is over: the next change is reading again.
-        #expect(reads(5, furthest: 4))
+        #expect(arrive([4]).isEmpty, "Even a jump to the next page isn't reading")
+        // The jump is over: once the page it landed on counts (after a
+        // while on screen), reading on from it counts again.
+        read.insert(4)
+        #expect(arrive([5]) == [4, 5])
 
         // A jump that never changed the page doesn't linger.
         let now = ContinuousClock.now
         progress.jumpStarting(now: now)
-        #expect(reads(6, furthest: 5, now: now + .seconds(2)))
+        #expect(arrive([6], now: now + .seconds(2)) == [5, 6])
+
+        // Spreads: the pages of the first one count too.
+        read = []
+        progress.start(at: [0, 1])
+        #expect(arrive([2, 3]) == [0, 1, 2, 3])
+        // With book spreads the cover is on its own.
+        read = []
+        progress.start(at: [0])
+        #expect(arrive([1, 2]) == [0, 1, 2])
+        #expect(arrive([3, 4]) == [1, 2, 3, 4])
     }
 }

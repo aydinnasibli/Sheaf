@@ -182,7 +182,7 @@ extension ReaderModel {
         guard let entry, let store else { return }
         store.addPageNote(
             to: entry, pageIndex: snapshot.pageIndex, pageLabel: snapshot.pageLabel, text: snapshot.text,
-            id: snapshot.id, createdAt: snapshot.createdAt
+            id: snapshot.id, createdAt: snapshot.createdAt, modifiedAt: snapshot.modifiedAt
         )
         refreshPageNotes()
         registerUndo(actionName) { $0.removePageNote(id: snapshot.id, actionName: actionName) }

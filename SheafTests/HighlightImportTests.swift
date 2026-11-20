@@ -149,6 +149,78 @@ struct HighlightImportTests {
         #expect(try allEntries().count == 2)
     }
 
+    // MARK: Each highlight's ID is its own
+
+    @Test func aCopyOfAFileGetsHighlightIDsOfItsOwn() async throws {
+        let url = try TestFiles.pdf(named: "Original.pdf", pages: ["Shared words stay here"])
+        let old = try TestFiles.highlight(of: "Shared words", in: url, kind: .definition, note: "In both files")
+        #expect(PDFHighlightWriter.write([old], to: url) == .saved)
+        // As Finder's Duplicate, or copying it to another drive, makes.
+        let copyURL = try TestFiles.folder().appending(path: "Original copy.pdf")
+        try FileManager.default.copyItem(at: url, to: copyURL)
+        let original = try #require(store.add(urls: [url]).first)
+        let copy = try #require(store.add(urls: [copyURL]).first)
+
+        _ = try await open(original)
+        let model = try await open(copy)
+
+        let mine = try #require(original.highlights.first)
+        let theirs = try #require(copy.highlights.first)
+        #expect(mine.id == old.id)
+        #expect(theirs.id != old.id)
+        #expect(theirs.note == "In both files")
+        #expect(theirs.kind == .definition)
+        #expect(theirs.text == "Shared words")
+        // Each ID finds its own PDF's highlight.
+        #expect(store.highlight(id: old.id)?.entry?.id == original.id)
+        #expect(store.highlight(id: theirs.id)?.entry?.id == copy.id)
+
+        // The copy's file gets the new ID at its next save, in place of the old.
+        #expect(copy.needsFileSave)
+        #expect(copy.removedHighlightIDs == [old.id])
+        #expect(PDFHighlights.ids(in: model.document) == [theirs.id])
+        await model.saveAndWait()
+        #expect(try idsInFile(copyURL) == [theirs.id])
+        #expect(try idsInFile(url) == [old.id])
+        #expect(copy.removedHighlightIDs.isEmpty)
+        #expect(!copy.needsFileSave)
+
+        // Opening it again brings in nothing more.
+        _ = try await open(copy)
+        #expect(copy.highlights.map(\.id) == [theirs.id])
+    }
+
+    @Test func highlightsSharingAnIDGetTheirOwnAsTheLibraryOpens() throws {
+        // As copies of one file could leave them before Sheaf checked.
+        let original = LibraryEntry(title: "Paper", path: "/Papers/Paper.pdf", pageCount: 1, now: .now - 3600)
+        let copy = LibraryEntry(title: "Paper copy", path: "/Backup/Paper.pdf", pageCount: 1)
+        container.mainContext.insert(original)
+        container.mainContext.insert(copy)
+        let rect = CGRect(x: 72, y: 700, width: 100, height: 14)
+        let shared = UUID()
+        let mine = store.addHighlight(to: original, pageIndex: 0, kind: .keyIdea, text: "Shared", rects: [rect])
+        let theirs = store.addHighlight(to: copy, pageIndex: 0, kind: .keyIdea, text: "Shared", rects: [rect])
+        let other = store.addHighlight(to: copy, pageIndex: 0, kind: .evidence, text: "Not shared", rects: [rect])
+        mine.id = shared
+        theirs.id = shared
+        original.needsFileSave = false
+        copy.needsFileSave = false
+        store.save()
+
+        #expect(store.repairDuplicateHighlightIDs() == 1)
+
+        // The PDF added first keeps it.
+        #expect(mine.id == shared)
+        #expect(theirs.id != shared)
+        #expect(other.id != shared && other.text == "Not shared")
+        #expect(store.highlight(id: shared)?.entry?.id == original.id)
+        #expect(!original.needsFileSave)
+        // The copy's file takes the old ID out and writes the new one at its next save.
+        #expect(copy.removedHighlightIDs == [shared])
+        #expect(copy.needsFileSave)
+        #expect(store.repairDuplicateHighlightIDs() == 0)
+    }
+
     @Test func aPDFMovedAfterSavingStillSaves() async throws {
         let url = try TestFiles.pdf(pages: ["First words", "Second words"])
         let entry = try #require(store.add(urls: [url]).first)

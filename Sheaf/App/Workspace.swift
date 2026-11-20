@@ -66,6 +66,11 @@ final class Workspace {
     var renameRequest: UUID? {
         didSet { if renameRequest != nil { alertWindow = frontWindow } }
     }
+    /// A new collection waiting for its name, with the PDFs to put in it
+    /// (none from the left panel's New Collection; see `PDFActionAlerts`).
+    var newCollectionRequest: [UUID]? {
+        didSet { if newCollectionRequest != nil { alertWindow = frontWindow } }
+    }
     /// A PDF whose file couldn't be found when opening or sharing it (see `PDFActionAlerts`).
     var missingFileRequest: UUID? {
         didSet { if missingFileRequest != nil { alertWindow = frontWindow } }

@@ -12,8 +12,13 @@ struct LibrarySidebar: View {
     let collections: [PDFCollection]
     let highlights: [HighlightRecord]
 
+    @Environment(\.undoManager) private var undoManager
     @State private var renaming: PDFCollection?
     @State private var nameDraft = ""
+    /// The collection she asked to delete, until she confirms: its ID and
+    /// what the confirmation says, kept apart from the collection, which is
+    /// gone while the alert closes.
+    @State private var deleting: (id: UUID, summary: CollectionDeletionSummary)?
     /// The row PDFs are being dragged over.
     @State private var dropTarget: LibraryScope?
 
@@ -85,14 +90,14 @@ struct LibrarySidebar: View {
                         }
                         .contextMenu {
                             Button("Rename\u{2026}") { startRenaming(collection) }
-                            Button("Delete Collection", role: .destructive) {
-                                if scope == .collection(collection.id) { scope = .all }
-                                library.delete(collection)
+                            Button("Delete Collection\u{2026}", role: .destructive) {
+                                deleting = (collection.id, CollectionDeletionSummary(collection))
                             }
                         }
                     }
+                    // Asks for the name first, as File › Add to Collection does.
                     Button {
-                        startRenaming(library.createCollection(named: "New Collection"))
+                        workspace.requestNewCollection()
                     } label: {
                         HStack(spacing: 10) {
                             Image(systemName: "plus").frame(width: 16)
@@ -154,6 +159,19 @@ struct LibrarySidebar: View {
                 if let renaming { library.rename(renaming, to: nameDraft) }
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .alert(
+            deleting?.summary.title ?? "",
+            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+            presenting: deleting
+        ) { deleting in
+            // ⌘Z brings it back, with its PDFs.
+            Button("Delete", role: .destructive) {
+                workspace.deleteCollection(deleting.id, undoManager: undoManager)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { deleting in
+            Text(deleting.summary.message)
         }
     }
 

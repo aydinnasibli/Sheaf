@@ -14,6 +14,9 @@ struct PageNoteCard: View {
     @FocusState private var isFocused: Bool
 
     private var label: String { model.pageLabel(at: page) }
+    private var field: DraftField { .pageNote(page) }
+    /// The note's field is showing: it's being edited, or it's a new note.
+    private var isTyping: Bool { isEditing || note == nil }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -68,13 +71,22 @@ struct PageNoteCard: View {
         .animation(Theme.hoverAnimation, value: isHovered)
         .onHover { isHovered = $0 }
         .onChange(of: isFocused) { _, focused in
-            if !focused && (isEditing || note == nil) { commit() }
+            if !focused && isTyping { commit() }
         }
-        .onAppear(perform: startEditingIfAsked)
+        // The reader keeps what's typed as it's typed, and saves it if Sheaf
+        // quits or the PDF closes first.
+        .onChange(of: draft) {
+            if isTyping { model.keepDraft(draft, for: field) }
+        }
+        .onAppear {
+            // An empty note to type in: saving it as it is takes it away.
+            if note == nil { model.keepDraft(draft, for: field) }
+            startEditingIfAsked()
+        }
         .onChange(of: model.pendingPageNoteEdit) { startEditingIfAsked() }
-        // Quitting while typing keeps what was typed.
-        .onReceive(NotificationCenter.default.publisher(for: .sheafFlushSaves)) { _ in
-            if isEditing || note == nil { commit() }
+        // Hiding the panel or leaving the PDF keeps what was typed.
+        .onDisappear {
+            if isTyping { commit() }
         }
         .contextMenu {
             if let note {
@@ -97,15 +109,17 @@ struct PageNoteCard: View {
         draft = note?.text ?? ""
         isEditing = true
         isFocused = true
+        model.keepDraft(draft, for: field)
     }
 
     private func commit() {
         isEditing = false
-        model.setPageNote(draft, onPage: page)
+        model.saveDraft(field)
     }
 
     private func cancel() {
         isEditing = false
+        model.discardDraft(field)
         draft = note?.text ?? ""
         // An empty note that was never saved goes away.
         if note == nil { model.pageNoteDraftPage = nil }
@@ -160,13 +174,15 @@ struct SummarySection: View {
         .onChange(of: model.summary) { _, summary in
             if !isFocused { draft = summary }
         }
+        // The reader keeps what's typed as it's typed, and saves it if Sheaf
+        // quits or the PDF closes first.
+        .onChange(of: draft) {
+            if isFocused { model.keepDraft(draft, for: .summary) }
+        }
         .onChange(of: isFocused) { _, focused in
-            if !focused { model.setSummary(draft) }
+            if !focused { model.saveDraft(.summary) }
         }
-        .onDisappear { model.setSummary(draft) }
-        .onReceive(NotificationCenter.default.publisher(for: .sheafFlushSaves)) { _ in
-            model.setSummary(draft)
-        }
+        .onDisappear { model.saveDraft(.summary) }
     }
 
     /// The first line, shown beside the title while folded away.

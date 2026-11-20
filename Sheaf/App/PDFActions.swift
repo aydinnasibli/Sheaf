@@ -122,8 +122,39 @@ extension Workspace {
         library.move(entries, to: collection)
     }
 
-    func moveToNewCollection(_ entries: [LibraryEntry]) {
-        library.move(entries, to: library.createCollection(named: "New Collection"))
+    /// Asks for a new collection's name (see `PDFActionAlerts`); the PDFs go in it.
+    func requestNewCollection(for entries: [LibraryEntry] = []) {
+        newCollectionRequest = entries.map(\.id)
+    }
+
+    /// Makes a collection with the name she gave, and puts the PDFs in it.
+    @discardableResult
+    func createCollection(named name: String, with ids: [UUID]) -> PDFCollection {
+        let collection = library.createCollection(named: name)
+        let entries = ids.compactMap(library.entry(id:))
+        if !entries.isEmpty { library.move(entries, to: collection) }
+        return collection
+    }
+
+    /// Deletes a collection; its PDFs stay in the library. Undo brings it
+    /// back as it was, with its PDFs.
+    func deleteCollection(_ id: UUID, undoManager: UndoManager?) {
+        guard let collection = library.collection(id: id) else { return }
+        if libraryScope == .collection(id) { libraryScope = .all }
+        let deleted = library.delete(collection)
+        undoManager?.registerUndo(withTarget: self) { [weak undoManager] workspace in
+            workspace.restoreCollection(deleted, undoManager: undoManager)
+        }
+        undoManager?.setActionName("Delete Collection")
+    }
+
+    /// Undo of `deleteCollection`.
+    private func restoreCollection(_ deleted: DeletedCollection, undoManager: UndoManager?) {
+        guard library.restore(deleted) != nil else { return }
+        undoManager?.registerUndo(withTarget: self) { [weak undoManager] workspace in
+            workspace.deleteCollection(deleted.id, undoManager: undoManager)
+        }
+        undoManager?.setActionName("Delete Collection")
     }
 
     // MARK: Renaming

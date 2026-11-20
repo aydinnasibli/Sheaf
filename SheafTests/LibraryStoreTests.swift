@@ -87,22 +87,53 @@ struct LibraryStoreTests {
 
     @Test func readingProgressAndStatus() {
         let item = LibraryEntry(title: "Book", path: "/book.pdf", pageCount: 10)
+        // Never opened: nothing read.
         #expect(item.readingStatus == .unread)
-        #expect(item.progress == 0.1)
+        #expect(item.progress == 0)
 
+        // A page read counts on its own, not the pages before it.
         item.recordPage(4)
         #expect(item.readingStatus == .inProgress)
-        #expect(item.progress == 0.5)
+        #expect(item.progress == 0.1)
 
         item.recordPage(1)
         #expect(item.lastPageIndex == 1)
-        #expect(item.furthestPageIndex == 4)
+        #expect(item.readPages == [1, 4])
+        #expect(item.hasRead(4) && !item.hasRead(3))
 
         item.recordPage(9)
+        #expect(item.readingStatus == .inProgress, "Pages in between aren't read")
+        item.recordRead(0..<10)
+        #expect(item.readPages == Array(0..<10))
         #expect(item.readingStatus == .finished)
+        #expect(item.progress == 1)
 
         item.recordPage(50)
         #expect(item.lastPageIndex == 9)
+        #expect(item.readPages.count == 10)
+    }
+
+    @Test func aLibraryFromBeforeReadPagesKeepsItsProgress() {
+        // Then every page up to the furthest one counted as read.
+        let item = LibraryEntry(title: "Book", path: "/book.pdf", pageCount: 10)
+        item.furthestPageIndex = 3
+        #expect(item.progress == 0.4)
+        #expect(item.readingStatus == .inProgress)
+        #expect(item.hasRead(0) && item.hasRead(3) && !item.hasRead(4))
+
+        // Pages read since count with them, once each.
+        item.recordRead([2, 7])
+        #expect(item.readPages == [7])
+        #expect(item.progress == 0.5)
+
+        item.furthestPageIndex = 9
+        #expect(item.readingStatus == .finished)
+        #expect(item.progress == 1)
+
+        // A PDF never opened then started at 0, which counted nothing.
+        let unopened = LibraryEntry(title: "Other", path: "/other.pdf", pageCount: 2)
+        #expect(unopened.progress == 0)
+        #expect(unopened.readingStatus == .unread)
     }
 
     @Test func collectionsGetColorsInTurnAndKeepPDFsWhenDeleted() throws {

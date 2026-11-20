@@ -4,6 +4,25 @@ import Observation
 import PDFKit
 import SwiftData
 
+/// A deleted collection, kept by Undo: everything needed to bring it back.
+nonisolated struct DeletedCollection: Sendable {
+    let id: UUID
+    let name: String
+    let colorIndex: Int
+    let createdAt: Date
+    /// Its PDFs, by library ID.
+    let entryIDs: [UUID]
+}
+
+extension DeletedCollection {
+    init(_ collection: PDFCollection) {
+        self.init(
+            id: collection.id, name: collection.name, colorIndex: collection.colorIndex,
+            createdAt: collection.createdAt, entryIDs: collection.items.map(\.id)
+        )
+    }
+}
+
 /// Adds PDFs to the library, finds their files again, and keeps the
 /// library's bookkeeping (reading position, last opened) up to date.
 @Observable
@@ -86,9 +105,11 @@ final class LibraryStore {
         return record
     }
 
-    /// Brings back a deleted highlight with its original ID (for Undo).
+    /// Brings back a deleted highlight with its original ID (for Undo), and
+    /// its page label: `pageLabel` if there is one, else the one it had.
     @discardableResult
-    func restoreHighlight(_ snapshot: HighlightSnapshot, to entry: LibraryEntry, pageLabel: String = "") -> HighlightRecord {
+    func restoreHighlight(_ snapshot: HighlightSnapshot, to entry: LibraryEntry, pageLabel: String? = nil) -> HighlightRecord {
+        let pageLabel = pageLabel.flatMap { $0.isEmpty ? nil : $0 } ?? snapshot.pageLabel
         let record = insertRecord(
             id: snapshot.id, into: entry, pageIndex: snapshot.pageIndex,
             kind: HighlightKind(rawValue: snapshot.kindRaw) ?? .keyIdea,
@@ -109,15 +130,21 @@ final class LibraryStore {
     /// with the same IDs, so the file's highlights are never forgotten (it
     /// was removed from the library and opened again, say). Highlights
     /// deleted in Sheaf whose removal hasn't reached the file are skipped.
-    /// Returns how many were added.
+    ///
+    /// A highlight whose ID another PDF's highlight has already (the file is
+    /// a copy of one in the library: duplicated in Finder, or moved to
+    /// another drive) gets a new ID, and the next save writes it into the
+    /// file in place of the old one. Returns how many were added.
     @discardableResult
     func importHighlights(_ found: [PDFHighlightImport.Found], into entry: LibraryEntry) -> Int {
+        guard !found.isEmpty else { return 0 }
         var known = knownHighlightIDs(of: entry)
+        var taken = takenHighlightIDs(besides: entry)
         var count = 0
         for highlight in found where known.insert(highlight.id).inserted {
             insertRecord(
-                id: highlight.id, into: entry, pageIndex: highlight.pageIndex,
-                kind: .nearest(toColorHex: highlight.colorHex),
+                id: uniqueHighlightID(highlight.id, comingInto: entry, taken: &taken), into: entry,
+                pageIndex: highlight.pageIndex, kind: .nearest(toColorHex: highlight.colorHex),
                 text: highlight.text, note: highlight.note, rects: highlight.rects, createdAt: highlight.createdAt
             )
             count += 1
@@ -208,13 +235,16 @@ final class LibraryStore {
     // Kept in the library only, so unlike highlights they never mark the
     // PDF file as needing a save.
 
+    /// `modifiedAt` is for Undo, bringing a note back as it was; a new
+    /// note was last changed when it was written.
     @discardableResult
     func addPageNote(
         to entry: LibraryEntry, pageIndex: Int, pageLabel: String = "", text: String,
-        id: UUID = UUID(), createdAt: Date = .now
+        id: UUID = UUID(), createdAt: Date = .now, modifiedAt: Date? = nil
     ) -> PageNote {
         let note = PageNote(pageIndex: pageIndex, pageLabel: pageLabel, text: text, now: createdAt)
         note.id = id
+        if let modifiedAt { note.modifiedAt = modifiedAt }
         context.insert(note)
         note.entry = entry
         save()
@@ -342,11 +372,33 @@ final class LibraryStore {
         collectionChanges += 1
     }
 
-    /// Deletes a collection. Its PDFs stay in the library.
-    func delete(_ collection: PDFCollection) {
+    /// Deletes a collection. Its PDFs stay in the library. Returns what
+    /// Undo needs to bring it back (see `restore(_:)`).
+    @discardableResult
+    func delete(_ collection: PDFCollection) -> DeletedCollection {
+        let deleted = DeletedCollection(collection)
         context.delete(collection)
         save()
         collectionChanges += 1
+        return deleted
+    }
+
+    /// Brings back a deleted collection as it was: the same ID, name, color
+    /// and place in the list, with its PDFs. A PDF put in another collection
+    /// since stays there, and one removed from the library doesn't come
+    /// back. Returns `nil` if the collection is back already.
+    @discardableResult
+    func restore(_ deleted: DeletedCollection) -> PDFCollection? {
+        guard collection(id: deleted.id) == nil else { return nil }
+        let collection = PDFCollection(name: deleted.name, colorIndex: deleted.colorIndex, now: deleted.createdAt)
+        collection.id = deleted.id
+        context.insert(collection)
+        for entry in deleted.entryIDs.compactMap(entry(id:)) where entry.collection == nil {
+            entry.collection = collection
+        }
+        save()
+        collectionChanges += 1
+        return collection
     }
 
     func save() {

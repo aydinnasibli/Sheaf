@@ -31,17 +31,23 @@ final class PageNote {
     }
 }
 
-/// A page note's data, kept by Undo after the note is deleted.
-struct PageNoteSnapshot {
+/// A page note's data, kept by Undo after the note is deleted (on its own,
+/// or with its PDF when that's removed from the library).
+nonisolated struct PageNoteSnapshot: Sendable {
     let id: UUID
     let pageIndex: Int
     let pageLabel: String
     let text: String
     let createdAt: Date
+    /// When it was last changed; `nil` means when it was written.
+    var modifiedAt: Date?
 }
 
 extension PageNoteSnapshot {
     init(_ note: PageNote) {
-        self.init(id: note.id, pageIndex: note.pageIndex, pageLabel: note.pageLabel, text: note.text, createdAt: note.createdAt)
+        self.init(
+            id: note.id, pageIndex: note.pageIndex, pageLabel: note.pageLabel, text: note.text,
+            createdAt: note.createdAt, modifiedAt: note.modifiedAt
+        )
     }
 }

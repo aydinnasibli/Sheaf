@@ -111,8 +111,12 @@ struct LibraryHighlightCard: View {
         .onChange(of: isFieldFocused) { _, focused in
             if !focused && editor != nil { commit() }
         }
-        // Leaving the page while typing keeps what was typed.
+        // Leaving the page while typing keeps what was typed, as do
+        // quitting and exporting.
         .onDisappear { if editor != nil { commit() } }
+        .onReceive(NotificationCenter.default.publisher(for: .sheafFlushSaves)) { _ in
+            if editor != nil { commit() }
+        }
         .contextMenu { menu }
     }
 
@@ -253,6 +257,8 @@ struct LibraryHighlightCard: View {
     private func commit(isReturn: Bool = false) {
         guard let editor else { return }
         self.editor = nil
+        // Deleted meanwhile (by Undo, say): there's nothing to save it on.
+        guard record.modelContext != nil, !record.isDeleted else { return }
         switch editor {
         case .note:
             workspace.setNote(draft, forHighlight: record.id, undoManager: undoManager)

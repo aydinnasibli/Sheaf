@@ -66,7 +66,7 @@ struct PDFMenuItems: View {
                 Button(collection.name) { workspace.move(entries, to: collection) }
             }
             if !collections.isEmpty { Divider() }
-            Button("New Collection") { workspace.moveToNewCollection(entries) }
+            Button("New Collection\u{2026}") { workspace.requestNewCollection(for: entries) }
         }
         .disabled(isEmpty)
         let inCollection = entries.contains { $0.collection != nil }

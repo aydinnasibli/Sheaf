@@ -189,6 +189,16 @@ struct HighlightCard: View {
     let model: ReaderModel
     /// Clicked on the page or just made: outlined.
     var isSelected = false
+    /// The highlight's ID, kept so a note being typed can still be saved as
+    /// the card goes, without touching a highlight deleted meanwhile.
+    private let id: UUID
+
+    init(record: HighlightRecord, model: ReaderModel, isSelected: Bool = false) {
+        self.record = record
+        self.model = model
+        self.isSelected = isSelected
+        self.id = record.id
+    }
 
     @State private var isEditing = false
     @State private var draft = ""
@@ -234,7 +244,7 @@ struct HighlightCard: View {
                         .background(Theme.field, in: RoundedRectangle(cornerRadius: 7))
                         .focused($isNoteFocused)
                         .onSubmit(commit)
-                        .onExitCommand { isEditing = false }
+                        .onExitCommand(perform: cancelNote)
                     Text("Return to save \u{00B7} Esc to cancel")
                         .font(.system(size: 10.5))
                         .foregroundStyle(Theme.inkMuted)
@@ -270,6 +280,19 @@ struct HighlightCard: View {
         }
         .onChange(of: isAnswerFocused) { _, focused in
             if !focused && isAnswering { commitAnswer(isReturn: false) }
+        }
+        // The reader keeps what's typed as it's typed, and saves it if Sheaf
+        // quits or the PDF closes first.
+        .onChange(of: draft) {
+            if isEditing { model.keepDraft(draft, for: .note(id)) }
+        }
+        .onChange(of: answerDraft) {
+            if isAnswering { model.keepDraft(answerDraft, for: .answer(id)) }
+        }
+        // Hiding the panel, leaving the PDF or scrolling far away keeps what was typed.
+        .onDisappear {
+            commit()
+            commitAnswer(isReturn: false)
         }
         // The note shortcut asks for this card's note.
         .onAppear(perform: startEditingIfAsked)
@@ -311,6 +334,7 @@ struct HighlightCard: View {
                 commitAnswer(isReturn: true)
             } cancel: {
                 isAnswering = false
+                model.discardDraft(.answer(id))
             }
         } else if record.isAnsweredQuestion {
             Button(action: startAnswering) {
@@ -372,6 +396,7 @@ struct HighlightCard: View {
         answerDraft = record.answer
         isAnswering = true
         isAnswerFocused = true
+        model.keepDraft(answerDraft, for: .answer(id))
     }
 
     /// Return marks the question answered, even with nothing written;
@@ -379,9 +404,14 @@ struct HighlightCard: View {
     private func commitAnswer(isReturn: Bool) {
         guard isAnswering else { return }
         isAnswering = false
-        let text = answerDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isReturn || !text.isEmpty || record.isAnswered else { return }
-        model.setAnswer(text, isAnswered: true, for: record)
+        guard isReturn else {
+            model.saveDraft(.answer(id))
+            return
+        }
+        model.discardDraft(.answer(id))
+        if let record = model.highlight(id: id) {
+            model.setAnswer(answerDraft, isAnswered: true, for: record)
+        }
     }
 
     private func startEditingIfAsked() {
@@ -394,12 +424,18 @@ struct HighlightCard: View {
         draft = record.note
         isEditing = true
         isNoteFocused = true
+        model.keepDraft(draft, for: .note(id))
     }
 
     private func commit() {
         guard isEditing else { return }
         isEditing = false
-        model.setNote(draft, for: record)
+        model.saveDraft(.note(id))
+    }
+
+    private func cancelNote() {
+        isEditing = false
+        model.discardDraft(.note(id))
     }
 }
 

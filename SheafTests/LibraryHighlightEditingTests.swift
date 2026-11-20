@@ -90,9 +90,88 @@ struct LibraryHighlightEditingTests {
         await reader.saveAndWait()
         #expect(!entry.needsFileSave)
 
-        // Closing the PDF takes its changes out of the library's Undo too.
+        // Closing the PDF keeps the library's Undo: then it changes the
+        // library, and the file the next time it opens.
         workspace.close(entry.id)
-        #expect(!libraryUndo.canUndo)
+        #expect(libraryUndo.canUndo)
+        libraryUndo.undo()
+        #expect(record.kind == .keyIdea)
+        #expect(entry.needsFileSave)
+        await document.waitUntilLoaded()
+    }
+
+    @Test func undoFromTheLibraryOutlastsOpeningAndLeavingThePDF() async throws {
+        let (workspace, entry, record, _) = try makeLibrary(pages: ["Attention is all you need"], highlighting: "Attention", kind: .question)
+        workspace.open(entry)
+        let document = try #require(workspace.selectedDocument)
+        try await waitUntil { document.model != nil }
+        let reader = try #require(document.model)
+        // The main window's Undo is the library's.
+        reader.undoManager = libraryUndo
+        workspace.showLibrary()
+        reader.suspend()
+        let id = record.id
+        step { workspace.setAnswer("Found it", isAnswered: true, forHighlight: id, undoManager: libraryUndo) }
+
+        // Deleted on the Highlights page while the PDF is open under "Open now".
+        step { workspace.deleteHighlight(id: id, undoManager: libraryUndo) }
+        #expect(reader.highlight(id: id) == nil)
+        #expect(annotations(of: id, in: reader.document).isEmpty)
+
+        // She opens the PDF, and goes back to the library: leaving the
+        // reader drops the reader's own Undo steps, but not the library's.
+        workspace.open(entry)
+        workspace.showLibrary()
+        reader.suspend()
+
+        #expect(libraryUndo.undoActionName == "Delete Highlight")
+        libraryUndo.undo()
+        let restored = try #require(reader.highlight(id: id))
+        #expect(restored.answer == "Found it")
+        #expect(!annotations(of: id, in: reader.document).isEmpty)
+
+        // Closing the PDF doesn't take it away either: Redo and Undo then
+        // go through the library.
+        await reader.saveAndWait()
+        workspace.close(entry.id)
+        libraryUndo.redo()
+        #expect(store.highlight(id: id) == nil)
+        #expect(entry.removedHighlightIDs == [id])
+        libraryUndo.undo()
+        #expect(store.highlight(id: id)?.answer == "Found it")
+        libraryUndo.undo()
+        #expect(store.highlight(id: id)?.isAnswered == false)
+        await document.waitUntilLoaded()
+    }
+
+    @Test func changesReachAPDFInItsOwnWindow() async throws {
+        let (workspace, entry, record, url) = try makeLibrary(pages: ["Attention is all you need"], highlighting: "Attention")
+        workspace.openInNewWindow(entry)
+        #expect(workspace.ownWindowDidAppear(entry.id))
+        let document = try #require(workspace.windowedDocument(id: entry.id))
+        try await waitUntil { document.model != nil }
+        let reader = try #require(document.model)
+        await reader.saveAndWait()
+        let id = record.id
+
+        step { workspace.setKind(.evidence, forHighlight: id, undoManager: libraryUndo) }
+        #expect(annotations(of: id, in: reader.document).allSatisfy { Self.hex($0.color) == HighlightKind.evidence.pageColorHex })
+
+        step { workspace.deleteHighlight(id: id, undoManager: libraryUndo) }
+        #expect(reader.highlight(id: id) == nil)
+        #expect(annotations(of: id, in: reader.document).isEmpty)
+        // The reader's next save doesn't write it back into the file.
+        await reader.saveAndWait()
+        #expect(annotations(of: id, in: try #require(PDFDocument(url: url))).isEmpty)
+        #expect(store.highlight(id: id) == nil)
+
+        libraryUndo.undo()
+        #expect(reader.highlight(id: id) != nil)
+        #expect(!annotations(of: id, in: reader.document).isEmpty)
+        await reader.saveAndWait()
+        #expect(!annotations(of: id, in: try #require(PDFDocument(url: url))).isEmpty)
+
+        workspace.close(entry.id)
         await document.waitUntilLoaded()
     }
 

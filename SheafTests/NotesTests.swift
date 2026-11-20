@@ -204,4 +204,110 @@ struct NotesTests {
         step { model.setSummary("A summary") }
         #expect(entry.notesCount == 3)
     }
+
+    // MARK: Typing that isn't saved yet
+
+    /// The text of the PDF file's annotations for a highlight.
+    private func notesInFile(of id: UUID, at url: URL) throws -> [String] {
+        let document = try #require(PDFDocument(url: url))
+        return (0..<document.pageCount)
+            .flatMap { document.page(at: $0)?.annotations ?? [] }
+            .filter { PDFHighlights.id(of: $0) == id }
+            .compactMap(\.contents)
+    }
+
+    @Test func whatsBeingTypedIsSavedWhenThePDFCloses() async throws {
+        let (model, entry) = try makeReader(pages: ["The quick brown fox jumps over", "A slide"])
+        let record = try highlight("brown fox", in: model, as: .question)
+        let id = record.id
+        // Typed, with neither Return nor a click elsewhere.
+        model.keepDraft("Check the source", for: .note(id))
+        model.keepDraft("Aesop", for: .answer(id))
+        model.keepDraft("The three stages", for: .pageNote(1))
+        model.keepDraft("About foxes", for: .summary)
+
+        step { model.close() }
+
+        #expect(record.note == "Check the source")
+        #expect(record.isAnsweredQuestion && record.answer == "Aesop")
+        #expect(entry.pageNotes.map(\.text) == ["The three stages"])
+        #expect(entry.summary == "About foxes")
+        // The note reaches the file too.
+        await model.saveAndWait()
+        let url = try #require(model.fileURL)
+        #expect(try notesInFile(of: id, at: url).allSatisfy { $0 == "Check the source" })
+        #expect(try !notesInFile(of: id, at: url).isEmpty)
+    }
+
+    @Test func whatsBeingTypedIsSavedWhenSheafQuitsOrThePDFLeavesTheScreen() async throws {
+        let (model, entry) = try makeReader(pages: ["The quick brown fox jumps over"])
+        let record = try highlight("brown fox", in: model)
+
+        // Quitting saves drafts (the quit flush calls this), and the field
+        // can go on being typed in.
+        model.keepDraft("About foxes", for: .summary)
+        step { model.saveDrafts() }
+        #expect(entry.summary == "About foxes")
+        model.keepDraft("About foxes and dogs", for: .summary)
+        step { model.saveDraft(.summary) }
+        #expect(entry.summary == "About foxes and dogs")
+        // Saved once: nothing more to save.
+        step { model.saveDraft(.summary) }
+        step { model.saveDrafts() }
+        #expect(entry.summary == "About foxes and dogs")
+
+        // Leaving the PDF (another one shown, the window closed).
+        model.keepDraft("Why it matters", for: .note(record.id))
+        step { model.suspend() }
+        #expect(record.note == "Why it matters")
+        await model.saveAndWait()
+        step { model.close() }
+    }
+
+    @Test func draftsLeftWithEscOrWithNothingToSaveOnChangeNothing() async throws {
+        let (model, entry) = try makeReader(pages: ["The quick brown fox jumps over the lazy dog"])
+        let question = try highlight("brown fox", in: model, as: .question)
+        let deleted = try highlight("lazy dog", in: model)
+        let deletedID = deleted.id
+
+        // Esc.
+        model.keepDraft("Never mind", for: .note(question.id))
+        model.discardDraft(.note(question.id))
+        // An empty answer leaves the question open.
+        model.keepDraft("  ", for: .answer(question.id))
+        // A highlight deleted (by Undo, say) while its note was being typed.
+        model.keepDraft("Gone", for: .note(deletedID))
+        step { model.delete(deleted) }
+        // An empty page note that was never written.
+        model.pageNoteDraftPage = 0
+        model.keepDraft("", for: .pageNote(0))
+
+        step { model.close() }
+
+        #expect(question.note.isEmpty)
+        #expect(question.isOpenQuestion)
+        #expect(store.highlight(id: deletedID) == nil)
+        #expect(entry.pageNotes.isEmpty)
+        #expect(model.pageNoteDraftPage == nil)
+        await model.saveAndWait()
+    }
+
+    @Test func whatsBeingTypedIsSavedWhenItsWindowCloses() async throws {
+        let url = try TestFiles.pdf(pages: ["The quick brown fox jumps over"])
+        let entry = try #require(store.add(urls: [url]).first)
+        let preferences = try #require(UserDefaults(suiteName: "SheafTests.\(UUID().uuidString)"))
+        let workspace = Workspace(library: store, preferences: preferences)
+        workspace.openInNewWindow(entry)
+        #expect(workspace.ownWindowDidAppear(entry.id))
+        let document = try #require(workspace.windowedDocument(id: entry.id))
+        try await waitUntil { document.model != nil }
+        let model = try #require(document.model)
+
+        model.keepDraft("Written in its own window", for: .pageNote(0))
+        workspace.ownWindowDidClose(entry.id)
+
+        #expect(workspace.windowedDocuments.isEmpty)
+        #expect(entry.pageNotes.map(\.text) == ["Written in its own window"])
+        await document.waitUntilLoaded()
+    }
 }

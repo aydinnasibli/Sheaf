@@ -3,7 +3,8 @@ import SwiftData
 
 /// Everything the library knows about a PDF, copied just before it's
 /// removed, so Undo can put it back exactly as it was: the same IDs, its
-/// highlights and notes, bookmarks, collection, star, progress and dates.
+/// highlights (with their notes, answers and page labels), page notes,
+/// summary, bookmarks, collection, star, progress and dates.
 nonisolated struct RemovedPDF: Sendable {
     let id: UUID
     let title: String
@@ -12,17 +13,21 @@ nonisolated struct RemovedPDF: Sendable {
     let pageCount: Int
     let lastPageIndex: Int
     let furthestPageIndex: Int
+    let readPages: [Int]
     let addedAt: Date
     let lastOpenedAt: Date
     let isStarred: Bool
     let bookmarkedPages: [Int]
     let needsFileSave: Bool
     let removedHighlightIDs: [UUID]
+    let summary: String
+    let pageLabels: [String]
     let cover: Data?
     /// The collection it was in. If that collection is deleted before Undo,
     /// the PDF comes back without one.
     let collectionID: UUID?
     let highlights: [HighlightSnapshot]
+    let pageNotes: [PageNoteSnapshot]
 }
 
 extension RemovedPDF {
@@ -35,15 +40,19 @@ extension RemovedPDF {
             pageCount: entry.pageCount,
             lastPageIndex: entry.lastPageIndex,
             furthestPageIndex: entry.furthestPageIndex,
+            readPages: entry.readPages,
             addedAt: entry.addedAt,
             lastOpenedAt: entry.lastOpenedAt,
             isStarred: entry.isStarred,
             bookmarkedPages: entry.bookmarkedPages,
             needsFileSave: entry.needsFileSave,
             removedHighlightIDs: entry.removedHighlightIDs,
+            summary: entry.summary,
+            pageLabels: entry.pageLabels,
             cover: entry.cover,
             collectionID: entry.collection?.id,
-            highlights: entry.highlights.map(HighlightSnapshot.init)
+            highlights: entry.highlights.map(HighlightSnapshot.init),
+            pageNotes: entry.pageNotes.map(PageNoteSnapshot.init)
         )
     }
 }
@@ -77,15 +86,19 @@ extension LibraryStore {
             entry.bookmark = pdf.bookmark
             entry.lastPageIndex = pdf.lastPageIndex
             entry.furthestPageIndex = pdf.furthestPageIndex
+            entry.readPages = pdf.readPages
             entry.lastOpenedAt = pdf.lastOpenedAt
             entry.isStarred = pdf.isStarred
             entry.bookmarkedPages = pdf.bookmarkedPages
             entry.needsFileSave = pdf.needsFileSave
             entry.removedHighlightIDs = pdf.removedHighlightIDs
+            entry.summary = pdf.summary
+            entry.pageLabels = pdf.pageLabels
             entry.cover = pdf.cover
             context.insert(entry)
             entry.collection = pdf.collectionID.flatMap(collection(id:))
-            for snapshot in pdf.highlights where highlight(id: snapshot.id) == nil {
+            var taken = takenHighlightIDs(besides: entry)
+            for snapshot in pdf.highlights {
                 let record = HighlightRecord(
                     pageIndex: snapshot.pageIndex,
                     kind: HighlightKind(rawValue: snapshot.kindRaw) ?? .keyIdea,
@@ -93,13 +106,23 @@ extension LibraryStore {
                     rects: snapshot.rects,
                     now: snapshot.createdAt
                 )
-                record.id = snapshot.id
+                // Another PDF has a highlight with this ID meanwhile (a copy
+                // of this file was opened, say): this one gets a new ID.
+                record.id = uniqueHighlightID(snapshot.id, comingInto: entry, taken: &taken)
                 record.note = snapshot.note
+                record.pageLabel = snapshot.pageLabel
                 record.isAnswered = snapshot.isAnswered
                 record.answer = snapshot.answer
                 context.insert(record)
                 record.entry = entry
                 highlights.append(record)
+            }
+            for snapshot in pdf.pageNotes where pageNote(id: snapshot.id) == nil {
+                let note = PageNote(pageIndex: snapshot.pageIndex, pageLabel: snapshot.pageLabel, text: snapshot.text, now: snapshot.createdAt)
+                note.id = snapshot.id
+                note.modifiedAt = snapshot.modifiedAt ?? snapshot.createdAt
+                context.insert(note)
+                note.entry = entry
             }
             restored.append(entry)
         }
@@ -132,6 +155,11 @@ extension LibraryStore {
 
     func collection(id: UUID) -> PDFCollection? {
         let descriptor = FetchDescriptor<PDFCollection>(predicate: #Predicate { $0.id == id })
+        return try? context.fetch(descriptor).first
+    }
+
+    func pageNote(id: UUID) -> PageNote? {
+        let descriptor = FetchDescriptor<PageNote>(predicate: #Predicate { $0.id == id })
         return try? context.fetch(descriptor).first
     }
 

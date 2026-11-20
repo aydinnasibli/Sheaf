@@ -16,6 +16,9 @@ nonisolated struct HighlightSnapshot: Sendable {
     /// A Question's answer, so Undo brings it back. Never written into the PDF.
     var isAnswered = false
     var answer = ""
+    /// The page's printed label kept with it ("xii", "245"), so Undo brings
+    /// that back too. Empty for PDFs without labels.
+    var pageLabel = ""
 }
 
 extension HighlightSnapshot {
@@ -30,7 +33,8 @@ extension HighlightSnapshot {
             createdAt: record.createdAt,
             colorHex: record.kind.pageColorHex,
             isAnswered: record.isAnswered,
-            answer: record.answer
+            answer: record.answer,
+            pageLabel: record.pageLabel
         )
     }
 }

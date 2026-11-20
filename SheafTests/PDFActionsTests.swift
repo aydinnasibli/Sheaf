@@ -93,7 +93,7 @@ struct PDFActionsTests {
         #expect(restored.addedAt == expected.addedAt)
         #expect(restored.lastOpenedAt == expected.lastOpenedAt)
         #expect(restored.lastPageIndex == 1)
-        #expect(restored.furthestPageIndex == 3)
+        #expect(restored.readPages == [1, 3])
         #expect(restored.isStarred)
         #expect(restored.bookmarkedPages == [0, 3])
         #expect(restored.collection?.id == research.id)
@@ -118,6 +118,97 @@ struct PDFActionsTests {
         // Redo removes them again.
         undoManager.redo()
         #expect(try allEntries().isEmpty)
+    }
+
+    /// Every stored field of a PDF in the library and what it owns, to
+    /// compare before removing it and after Undo.
+    private struct Everything: Equatable {
+        struct Highlight: Equatable {
+            let id: UUID, pageIndex: Int, kindRaw: Int, text: String, note: String, createdAt: Date
+            let rectValues: [Double], pageLabel: String, isAnswered: Bool, answer: String
+        }
+
+        struct Note: Equatable {
+            let id: UUID, pageIndex: Int, pageLabel: String, text: String, createdAt: Date, modifiedAt: Date
+        }
+
+        let id: UUID, title: String, lastKnownPath: String, bookmark: Data?, pageCount: Int
+        let lastPageIndex: Int, furthestPageIndex: Int, readPages: [Int], addedAt: Date, lastOpenedAt: Date
+        let isStarred: Bool, bookmarkedPages: [Int], needsFileSave: Bool, removedHighlightIDs: [UUID]
+        let summary: String, pageLabels: [String], cover: Data?, collectionID: UUID?
+        let highlights: [Highlight]
+        let pageNotes: [Note]
+
+        init(_ entry: LibraryEntry) {
+            id = entry.id
+            title = entry.title
+            lastKnownPath = entry.lastKnownPath
+            bookmark = entry.bookmark
+            pageCount = entry.pageCount
+            lastPageIndex = entry.lastPageIndex
+            furthestPageIndex = entry.furthestPageIndex
+            readPages = entry.readPages
+            addedAt = entry.addedAt
+            lastOpenedAt = entry.lastOpenedAt
+            isStarred = entry.isStarred
+            bookmarkedPages = entry.bookmarkedPages
+            needsFileSave = entry.needsFileSave
+            removedHighlightIDs = entry.removedHighlightIDs
+            summary = entry.summary
+            pageLabels = entry.pageLabels
+            cover = entry.cover
+            collectionID = entry.collection?.id
+            highlights = entry.highlights.sorted { $0.id.uuidString < $1.id.uuidString }.map {
+                Highlight(
+                    id: $0.id, pageIndex: $0.pageIndex, kindRaw: $0.kindRaw, text: $0.text, note: $0.note,
+                    createdAt: $0.createdAt, rectValues: $0.rectValues, pageLabel: $0.pageLabel,
+                    isAnswered: $0.isAnswered, answer: $0.answer
+                )
+            }
+            pageNotes = entry.pageNotes.sorted { $0.pageIndex < $1.pageIndex }.map {
+                Note(id: $0.id, pageIndex: $0.pageIndex, pageLabel: $0.pageLabel, text: $0.text, createdAt: $0.createdAt, modifiedAt: $0.modifiedAt)
+            }
+        }
+    }
+
+    @Test func undoBringsBackEverythingOnlySheafKeeps() throws {
+        let workspace = Workspace(library: store, preferences: preferences)
+        let thesis = store.createCollection(named: "Thesis")
+        let paper = try entry(named: "Paper", pages: 4)
+        let question = highlight(paper, "Why does it converge?", kind: .question, note: "Ask in the seminar")
+        question.pageLabel = "xi"
+        store.setAnswer("Because of the step size", isAnswered: true, for: question)
+        let evidence = highlight(paper, "Table 2", kind: .evidence)
+        evidence.pageLabel = "xi"
+        store.addPageNote(
+            to: paper, pageIndex: 2, pageLabel: "xii", text: "The diagram on the left",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000), modifiedAt: Date(timeIntervalSince1970: 1_700_100_000)
+        )
+        store.addPageNote(to: paper, pageIndex: 3, text: "Compare with chapter 2")
+        store.setSummary("Convergence of gradient descent, for chapter 3", for: paper)
+        paper.pageLabels = ["ix", "x", "xi", "xii"]
+        paper.recordRead([0, 2])
+        paper.recordPosition(2)
+        paper.bookmarkedPages = [1]
+        paper.removedHighlightIDs = [UUID()]
+        store.setStarred(true, for: [paper])
+        store.move([paper], to: thesis)
+        store.save()
+        let before = Everything(paper)
+        #expect(before.pageNotes.count == 2 && before.highlights.count == 2)
+
+        let undoManager = undoManager()
+        undoManager.beginUndoGrouping()
+        workspace.remove([paper.id], undoManager: undoManager)
+        undoManager.endUndoGrouping()
+        #expect(try container.mainContext.fetch(FetchDescriptor<PageNote>()).isEmpty, "Page notes go with it")
+
+        undoManager.undo()
+
+        let restored = try #require(store.entry(id: before.id))
+        #expect(Everything(restored) == before)
+        #expect(restored.label(ofPage: 2) == "xi")
+        #expect(restored.openQuestionCount == 0)
     }
 
     @Test func undoLeavesAPDFAloneThatWasAddedAgainMeanwhile() throws {
@@ -190,6 +281,68 @@ struct PDFActionsTests {
         highlight(other, "Three")
         let mixed = RemovalSummary([plain, other])
         #expect(mixed.message == "Their 1 highlight in Sheaf is deleted. The PDFs stay where they are, with the highlights Sheaf saved into them.")
+
+        // Page notes, answers and summaries are never in the file.
+        let question = highlight(paper, "Why?", kind: .question)
+        store.setAnswer("Found it", isAnswered: true, for: question)
+        store.addPageNote(to: paper, pageIndex: 0, text: "The diagram")
+        store.addPageNote(to: paper, pageIndex: 1, text: "The table")
+        store.setSummary("About attention", for: paper)
+        let everything = RemovalSummary([paper])
+        #expect(everything.message == "Its 3 highlights, 1 note, 2 page notes, 1 answer, 1 summary and 1 bookmark in Sheaf are deleted. The PDF stays where it is, with the highlights and notes Sheaf saved into it. Its page notes, answer and summary are kept only in Sheaf, not in the file.")
+
+        store.addPageNote(to: plain, pageIndex: 0, text: "Cover")
+        store.setSummary("Plain", for: plain)
+        let notesOnly = RemovalSummary([plain])
+        #expect(notesOnly.message == "Its 1 page note and 1 summary in Sheaf are deleted. The PDF itself stays where it is on your Mac. Its page note and summary are kept only in Sheaf, not in the file.")
+    }
+
+    // MARK: Collections
+
+    @Test func deletingACollectionAsksFirstAndUndoBringsItBack() throws {
+        let workspace = Workspace(library: store, preferences: preferences)
+        let first = store.createCollection(named: "Reading group")
+        let thesis = store.createCollection(named: "Thesis")
+        let paper = try entry(named: "Paper")
+        let notes = try entry(named: "Notes")
+        _ = try entry(named: "Other")
+        store.move([paper, notes], to: thesis)
+        workspace.libraryScope = .collection(thesis.id)
+        let (id, colorIndex, createdAt) = (thesis.id, thesis.colorIndex, thesis.createdAt)
+
+        // What the confirmation says.
+        let summary = CollectionDeletionSummary(thesis)
+        #expect(summary.title == "Delete the collection \u{201C}Thesis\u{201D}?")
+        #expect(summary.message == "The 2 PDFs in it stay in your library, with their highlights and notes.")
+        #expect(CollectionDeletionSummary(first).message == "It has no PDFs in it.")
+
+        let undoManager = undoManager()
+        undoManager.beginUndoGrouping()
+        workspace.deleteCollection(id, undoManager: undoManager)
+        undoManager.endUndoGrouping()
+
+        #expect(store.collection(id: id) == nil)
+        #expect(try allEntries().count == 3, "Its PDFs stay in the library")
+        #expect(paper.collection == nil)
+        #expect(workspace.libraryScope == .all)
+        #expect(undoManager.undoActionName == "Delete Collection")
+
+        // Meanwhile one of its PDFs goes in another collection: it stays there.
+        store.move([notes], to: first)
+        undoManager.undo()
+
+        let restored = try #require(store.collection(id: id))
+        #expect(restored.name == "Thesis")
+        #expect(restored.colorIndex == colorIndex)
+        #expect(restored.createdAt == createdAt)
+        #expect(restored.items.map(\.id) == [paper.id])
+        #expect(notes.collection?.id == first.id)
+        // In its place in the left panel.
+        #expect(store.allCollections().map(\.id) == [first.id, id])
+
+        undoManager.redo()
+        #expect(store.collection(id: id) == nil)
+        #expect(paper.collection == nil)
     }
 
     // MARK: Renaming
@@ -263,9 +416,13 @@ struct PDFActionsTests {
         workspace.setStarred(true, for: selected)
         #expect(selected.allSatisfy { $0.isStarred })
 
-        workspace.moveToNewCollection(selected)
+        // A new collection asks for its name first, then the PDFs go in it.
+        workspace.requestNewCollection(for: selected)
+        #expect(workspace.newCollectionRequest == [first.id, second.id])
+        #expect(first.collection == nil)
+        workspace.createCollection(named: " Thesis ", with: [first.id, second.id])
         let collection = try #require(first.collection)
-        #expect(collection.name == "New Collection")
+        #expect(collection.name == "Thesis")
         #expect(second.collection?.id == collection.id)
 
         let other = store.createCollection(named: "Other")

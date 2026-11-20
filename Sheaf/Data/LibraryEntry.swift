@@ -16,7 +16,10 @@ final class LibraryEntry {
     var pageCount: Int
     /// The page the reader was on when they last closed this PDF (0-based).
     var lastPageIndex = 0
-    /// The furthest page reached (0-based). Drives the "Read" percentage.
+    /// Libraries from before `readPages`: every page up to this one
+    /// (0-based) counts as read, as it did then. No longer moved on: a page
+    /// read now goes into `readPages`. 0 counts nothing, since it was also
+    /// where a PDF never opened started.
     var furthestPageIndex = 0
     var addedAt: Date
     var lastOpenedAt: Date
@@ -38,6 +41,10 @@ final class LibraryEntry {
     /// they differ from plain page numbers. Remembered because saving
     /// highlights into a PDF loses its labels (PDFKit doesn't write them).
     var pageLabels: [String] = []
+    /// The pages read (0-based), in order: drives the "Read" percentage and
+    /// "Finished". A page jumped to and left on screen a while counts on
+    /// its own, without the pages before it.
+    var readPages: [Int] = []
     /// A small image of the first page, as PNG.
     @Attribute(.externalStorage) var cover: Data?
     var collection: PDFCollection?
@@ -54,15 +61,35 @@ final class LibraryEntry {
         self.lastOpenedAt = now
     }
 
-    /// How much has been read, from 0 to 1.
+    /// How much has been read, from 0 to 1: the share of its pages read.
+    /// A PDF never opened has read nothing.
     var progress: Double {
         guard pageCount > 0 else { return 0 }
-        return min(1, Double(furthestPageIndex + 1) / Double(pageCount))
+        return min(1, Double(readPageCount) / Double(pageCount))
+    }
+
+    /// How many of its pages have been read.
+    var readPageCount: Int {
+        let legacy = legacyReadThrough
+        let later = readPages.count { $0 > legacy && $0 < pageCount }
+        return later + min(legacy + 1, pageCount)
     }
 
     var readingStatus: ReadingStatus {
-        if furthestPageIndex == 0 && lastPageIndex == 0 { return .unread }
-        return furthestPageIndex >= pageCount - 1 ? .finished : .inProgress
+        let read = readPageCount
+        if read == 0 { return lastPageIndex == 0 ? .unread : .inProgress }
+        return read >= pageCount ? .finished : .inProgress
+    }
+
+    /// Whether a page has been read.
+    func hasRead(_ index: Int) -> Bool {
+        index <= legacyReadThrough || readPages.contains(index)
+    }
+
+    /// The last page of the pages read the old way, from the first page on
+    /// (see `furthestPageIndex`), or -1 when there are none.
+    private var legacyReadThrough: Int {
+        furthestPageIndex > 0 ? furthestPageIndex : -1
     }
 
     /// Records the page the reader is on, and that it was read.
@@ -78,10 +105,17 @@ final class LibraryEntry {
         lastPageIndex = index
     }
 
-    /// Records that a page was read, moving "furthest read" on if it's past it.
+    /// Records that a page was read. The pages before it aren't: she may
+    /// have jumped there.
     func recordRead(_ index: Int) {
-        guard index >= 0, index < max(pageCount, 1) else { return }
-        furthestPageIndex = max(furthestPageIndex, index)
+        recordRead([index])
+    }
+
+    /// Records that these pages were read.
+    func recordRead(_ pages: some Sequence<Int>) {
+        let new = pages.filter { $0 >= 0 && $0 < max(pageCount, 1) && !hasRead($0) }
+        guard !new.isEmpty else { return }
+        readPages = Set(readPages).union(new).sorted()
     }
 
     /// The page's printed label as remembered, else its number (1-based).

@@ -115,9 +115,11 @@ final class ReaderModel {
     /// The window's undo manager, set by the reader view.
     @ObservationIgnored weak var undoManager: UndoManager?
     /// Where Undo goes for the change being made, when it isn't the reader's
-    /// window: a change made from the library's Highlights page is undone
-    /// from there (see `registeringUndo(with:_:)`).
+    /// window now: Redo of a change goes where its Undo was.
     @ObservationIgnored private weak var undoOverride: UndoManager?
+    /// Set while the library's Highlights page makes a change through this
+    /// reader: it registers the change's Undo itself.
+    @ObservationIgnored private var isRegisteringUndoPaused = false
     /// Every undo manager changes were registered with, so closing the PDF
     /// can take them all out.
     @ObservationIgnored private let undoManagersUsed = NSHashTable<UndoManager>.weakObjects()
@@ -148,6 +150,10 @@ final class ReaderModel {
     @ObservationIgnored var isHighlightsPanelVisible = false
     /// The popover over the page for a highlight or a page note.
     @ObservationIgnored let popover = PagePopover()
+    /// What she's typing in the Highlights panel and not saved yet, by
+    /// field, so it's saved even if the field goes before it can save
+    /// (see `ReaderModel+Drafts`).
+    @ObservationIgnored var drafts: [DraftField: String] = [:]
 
     // MARK: Reading progress
 
@@ -325,13 +331,15 @@ final class ReaderModel {
 
     /// Call when the PDF is closed.
     func close() {
-        popover.close()
+        // First, so notes being typed (in the popover or the panel) are kept.
+        saveDrafts()
         dwellTask?.cancel()
         stopBackgroundWork()
         document.cancelFindString()
         flushPendingSave()
         undoManager?.removeAllActions(withTarget: self)
-        // Including changes made from the library, so ⌘Z there can't reach a closed PDF.
+        // Including the ones made in a window it was in before, so ⌘Z
+        // there can't reach a closed PDF.
         for manager in undoManagersUsed.allObjects {
             manager.removeAllActions(withTarget: self)
         }
@@ -340,8 +348,8 @@ final class ReaderModel {
     /// Call when the reader leaves the screen: saves now, and drops undo
     /// steps so ⌘Z elsewhere can't change this PDF unseen.
     func suspend() {
-        // First, so a note typed in the popover is kept.
-        popover.close()
+        // First, so notes being typed (in the popover or the panel) are kept.
+        saveDrafts()
         dwellTask?.cancel()
         flushPendingSave()
         undoManager?.removeAllActions(withTarget: self)
@@ -858,11 +866,11 @@ final class ReaderModel {
         registerUndo(actionName) { $0.removeHighlights(snapshots, actionName: actionName) }
     }
 
-    /// Registers Undo for a change with the reader's window, or with the
-    /// window the change was made in. Undo and Redo of a change stay with
-    /// the undo manager it was registered with.
+    /// Registers Undo for a change with the reader's window. Undo and Redo
+    /// of a change stay with the undo manager it was registered with, even
+    /// if the PDF moves to another window meanwhile.
     func registerUndo(_ actionName: String, _ action: @escaping (ReaderModel) -> Void) {
-        guard let manager = undoOverride ?? undoManager else { return }
+        guard !isRegisteringUndoPaused, let manager = undoOverride ?? undoManager else { return }
         undoManagersUsed.add(manager)
         manager.registerUndo(withTarget: self) { [weak manager] model in
             model.registeringUndo(with: manager) { action(model) }
@@ -870,12 +878,21 @@ final class ReaderModel {
         manager.setActionName(actionName)
     }
 
-    /// Makes a change from outside the reader (the library's Highlights
-    /// page) with its Undo in that window, so ⌘Z there takes it back.
-    func registeringUndo(with manager: UndoManager?, _ change: () -> Void) {
+    /// Makes a change with its Undo in `manager`.
+    private func registeringUndo(with manager: UndoManager?, _ change: () -> Void) {
         let previous = undoOverride
         undoOverride = manager
         defer { undoOverride = previous }
+        change()
+    }
+
+    /// Makes a change from outside the reader (the library's Highlights
+    /// page), which registers its own Undo: one that outlasts this reader,
+    /// since the PDF may be left or closed before ⌘Z (see `HighlightActions`).
+    func withoutRegisteringUndo(_ change: () -> Void) {
+        let previous = isRegisteringUndoPaused
+        isRegisteringUndoPaused = true
+        defer { isRegisteringUndoPaused = previous }
         change()
     }
 
@@ -1341,33 +1358,37 @@ final class ReaderModel {
         // Don't overwrite the saved page with page 1 while the tab is still opening.
         guard hasRestoredPosition, let entry else { return }
         entry.recordPosition(currentPageIndex)
-        // A page counts as read when she reads her way to it, or once it
-        // has been on screen a while; not when she jumps to it.
-        let shown = visiblePageIndices.last ?? currentPageIndex
-        guard shown != progress.lastPage else { return }
-        if progress.arrive(at: shown, furthestRead: entry.furthestPageIndex) {
-            entry.recordRead(shown)
-        }
+        // Pages count as read when she reads her way to them, or once they
+        // have been on screen a while; not when she jumps to them.
+        let shown = shownPages
+        guard shown.last != progress.lastPage else { return }
+        entry.recordRead(progress.arrive(at: shown, hasRead: entry.hasRead))
         countAsReadLater(shown)
     }
 
-    /// Where reading starts when the PDF opens: the page it opened at.
+    /// The pages on screen, for reading progress.
+    private var shownPages: [Int] {
+        let pages = visiblePageIndices
+        return pages.isEmpty ? [currentPageIndex] : pages
+    }
+
+    /// Where reading starts when the PDF opens: the pages it opened at.
     private func startTrackingProgress() {
         if let page = pdfView.currentPage { currentPageIndex = document.index(for: page) }
-        let shown = visiblePageIndices.last ?? currentPageIndex
-        progress.start(at: shown)
-        countAsReadLater(shown)
+        progress.start(at: shownPages)
+        countAsReadLater(shownPages)
     }
 
-    /// Counts the page as read if it's still on screen after `readingDwell`.
-    private func countAsReadLater(_ page: Int) {
+    /// Counts the pages as read if they're still on screen after
+    /// `readingDwell`: these pages only, not the ones before them.
+    private func countAsReadLater(_ pages: [Int]) {
         dwellTask?.cancel()
-        guard let entry, page > entry.furthestPageIndex else { return }
+        guard let entry, pages.contains(where: { !entry.hasRead($0) }) else { return }
         let delay = readingDwell
         dwellTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, (visiblePageIndices.last ?? currentPageIndex) == page else { return }
-            entry.recordRead(page)
+            guard !Task.isCancelled, let self, shownPages == pages else { return }
+            entry.recordRead(pages)
         }
     }
 
@@ -1410,7 +1431,11 @@ final class ReaderModel {
                 MainActor.assumeIsolated { self?.didFinishSearching() }
             },
             center.addObserver(forName: .sheafFlushSaves, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.flushPendingSave() }
+                MainActor.assumeIsolated {
+                    // Quitting, or exporting: what she's typing is saved too.
+                    self?.saveDrafts()
+                    self?.flushPendingSave()
+                }
             },
         ]
     }

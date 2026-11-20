@@ -25,6 +25,9 @@ struct SheafApp: App {
             isTemporaryLibrary: isTemporaryLibrary,
             originalsFolder: Self.isRunningTests ? nil : OriginalPDFArchive.standardFolder
         )
+        // Copies of one file could give two PDFs the same highlight IDs
+        // before Sheaf checked; each highlight gets its own again.
+        library.repairDuplicateHighlightIDs()
         let workspace = Workspace(library: library)
         if !Self.isRunningTests {
             workspace.restore()
