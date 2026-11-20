@@ -1,17 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// The Sheaf wordmark: four highlighter strokes and the name.
+/// The Sheaf wordmark: the app icon's fan of pages and the name.
 struct Wordmark: View {
     var body: some View {
         HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                stroke(.keyIdea, width: 16)
-                stroke(.question, width: 12)
-                stroke(.definition, width: 16)
-                stroke(.evidence, width: 10)
-            }
-            .accessibilityHidden(true)
+            FannedPages()
+                .frame(width: 24, height: 22)
+                .accessibilityHidden(true)
             Text("Sheaf")
                 .font(Theme.display(18))
                 .tracking(-0.3)
@@ -20,8 +16,32 @@ struct Wordmark: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Sheaf")
     }
+}
 
-    private func stroke(_ kind: HighlightKind, width: CGFloat) -> some View {
-        Capsule().fill(kind.vivid).frame(width: width, height: 3.5)
+/// The mark from the app icon, small: four sheets in the highlighter
+/// colors fanned out behind a white page, all turning around one point
+/// below them (the same angles as Scripts/make-app-icon.swift).
+private struct FannedPages: View {
+    private static let sheets: [(kind: HighlightKind, degrees: Double)] = [
+        (.keyIdea, -22), (.evidence, 22), (.question, -11), (.definition, 11),
+    ]
+    /// The point the sheets turn around, as a fraction of a sheet: centered,
+    /// a little below its bottom edge.
+    private static let pivot = UnitPoint(x: 0.5, y: 1.14)
+
+    var body: some View {
+        ZStack {
+            ForEach(Self.sheets, id: \.kind) { sheet in
+                page.fill(sheet.kind.vivid)
+                    .frame(width: 10, height: 14)
+                    .rotationEffect(.degrees(sheet.degrees), anchor: Self.pivot)
+            }
+            page.fill(Theme.paper)
+                .overlay(page.strokeBorder(Theme.swatchEdge, lineWidth: 1))
+                .frame(width: 10, height: 14)
+        }
+        .offset(y: 2)
     }
+
+    private var page: RoundedRectangle { RoundedRectangle(cornerRadius: 1.8) }
 }
