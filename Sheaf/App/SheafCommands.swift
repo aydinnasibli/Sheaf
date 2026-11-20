@@ -1,12 +1,22 @@
 import SwiftUI
 
-/// Menu bar items. They act on what's on screen: the library or a PDF.
+/// Menu bar items. They act on what's on screen in the window in front:
+/// the library or a PDF in the main window, or a PDF in its own window.
 struct SheafCommands: Commands {
     let workspace: Workspace
 
-    /// The PDF on screen. Read from the workspace rather than keyboard
-    /// focus, so the menus work even while typing in a search field.
-    private var reader: ReaderModel? { workspace.selectedDocument?.model }
+    /// The reading window in front, which each window publishes.
+    @FocusedValue(\.readerWindow) private var focusedWindow
+
+    /// The window the menus act on: the one in front, or the main window
+    /// while another kind (Help, Settings) is in front or none is open. It's
+    /// the window, not the view with keyboard focus, so the menus work even
+    /// while typing in a search field.
+    private var window: ReaderWindow { focusedWindow ?? workspace.mainWindow }
+
+    /// The PDF on screen in that window.
+    private var document: OpenDocument? { workspace.document(in: window) }
+    private var reader: ReaderModel? { document?.model }
 
     /// For File › Add to Collection. Read again when one is made, renamed or deleted.
     private var collections: [PDFCollection] {
@@ -17,9 +27,10 @@ struct SheafCommands: Commands {
     /// A View menu item for a reader panel: shows or hides it beside the
     /// page, or over the page when the window is too narrow for it.
     private func panelBinding(_ panel: ReaderPanels.Panel) -> Binding<Bool> {
-        Binding(
-            get: { workspace.readerPanels.isShowing(panel) },
-            set: { _ in workspace.readerPanels.toggle(panel) }
+        let panels = window.panels
+        return Binding(
+            get: { panels.isShowing(panel) },
+            set: { _ in panels.toggle(panel) }
         )
     }
 
@@ -39,9 +50,10 @@ struct SheafCommands: Commands {
                 .keyboardShortcut("o")
         }
 
-        // File > Close: closes the PDF on screen, or the window from the library.
+        // File > Close: closes the PDF on screen, or the window from the
+        // library. A PDF's own window closes with its PDF.
         CommandGroup(replacing: .saveItem) {
-            if let document = workspace.selectedDocument {
+            if let document {
                 Button("Close \u{201C}\(document.title)\u{201D}") { workspace.close(document.id) }
                     .keyboardShortcut("w")
             } else {
@@ -50,16 +62,17 @@ struct SheafCommands: Commands {
             }
         }
 
-        // File > Show in Finder, Share…, Rename…, star, collections and
-        // Remove from Library: for the PDF on screen, or the PDFs selected
-        // in the library.
+        // File > Open in New Window, Show in Finder, Share…, Rename…, star,
+        // collections and Remove from Library: for the PDF on screen, or
+        // the PDFs selected in the library.
         CommandGroup(after: .saveItem) {
             Divider()
             PDFMenuItems(
-                entries: workspace.commandTargets,
+                entries: workspace.commandTargets(in: window),
                 collections: collections,
                 workspace: workspace,
-                isMenuBar: true
+                isMenuBar: true,
+                readerWindow: window
             )
         }
 
@@ -93,7 +106,7 @@ struct SheafCommands: Commands {
                 Button("Find\u{2026}") {
                     if let reader {
                         reader.searchFocusRequest += 1
-                    } else {
+                    } else if window.isMain {
                         workspace.librarySearchRequest += 1
                     }
                 }
@@ -172,10 +185,8 @@ struct SheafCommands: Commands {
                 .keyboardShortcut("1", modifiers: [.command, .option])
             Toggle("Show Highlights Panel", isOn: panelBinding(.highlights))
                 .keyboardShortcut("2", modifiers: [.command, .option])
-            Toggle("Focus Mode", isOn: Binding(
-                get: { workspace.isFocusMode },
-                set: { workspace.isFocusMode = $0 }
-            ))
+            // Full screen for this window only.
+            Toggle("Focus Mode", isOn: Bindable(window).isFocusMode)
             .keyboardShortcut("f", modifiers: [.command, .shift])
             .disabled(reader == nil)
             Divider()
@@ -217,13 +228,15 @@ struct SheafCommands: Commands {
                 WindowRouter.shared.showLibrary()
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
-            // ⇧⌘] and ⇧⌘[ like Safari's tabs; Control-Tab also works (see AppDelegate).
+            // ⇧⌘] and ⇧⌘[ like Safari's tabs; Control-Tab also works (see
+            // AppDelegate). They switch the main window's PDFs, so not in a
+            // PDF's own window.
             Button("Next Open PDF") { workspace.selectNext() }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
-                .disabled(workspace.documents.isEmpty)
+                .disabled(workspace.documents.isEmpty || !window.isMain)
             Button("Previous Open PDF") { workspace.selectPrevious() }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
-                .disabled(workspace.documents.isEmpty)
+                .disabled(workspace.documents.isEmpty || !window.isMain)
             Divider()
             Button("Previous Page") { reader?.goToPreviousPage() }
                 .keyboardShortcut(.upArrow, modifiers: [.command, .option])

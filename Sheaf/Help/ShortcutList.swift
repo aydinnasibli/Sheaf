@@ -59,6 +59,7 @@ enum ShortcutList {
         ]),
         Category(title: "In the library", shortcuts: [
             Shortcut("Open the selected PDFs", "Return", "\u{2318}\u{2193}"),
+            Shortcut("Open in a new window", "\u{2325}Return", "\u{2325}-double-click"),
             Shortcut("Select several PDFs", "\u{2318}-click", "\u{21E7}-click"),
             Shortcut("Select every PDF in the list", "\u{2318}A"),
             Shortcut("Quick Look", "Space", "\u{2318}Y"),

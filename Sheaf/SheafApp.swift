@@ -43,7 +43,7 @@ struct SheafApp: App {
     }
 
     var body: some Scene {
-        // One window: the library, or the PDF you're reading.
+        // The main window: the library, or the PDF you're reading.
         Window("Sheaf", id: "main") {
             MainWindow()
                 .environment(library)
@@ -56,6 +56,22 @@ struct SheafApp: App {
         .defaultLaunchBehavior(Self.isRunningTests ? .suppressed : .automatic)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands { SheafCommands(workspace: workspace) }
+
+        // A PDF in its own window, to read two side by side (File > Open in
+        // New Window), one window per PDF. These windows merge into tabs
+        // (Window > Merge All Windows), and macOS reopens them at launch,
+        // but never during unit tests.
+        WindowGroup("PDF", id: PDFWindow.sceneID, for: UUID.self) { $id in
+            PDFWindow(id: id)
+                .environment(library)
+                .environment(workspace)
+                .modelContainer(container)
+        }
+        .defaultSize(width: 1000, height: 820)
+        .restorationBehavior(Self.isRunningTests ? .disabled : .automatic)
+        .windowToolbarStyle(.unified(showsTitle: false))
+        // Opened for a PDF only, so no File > New PDF Window.
+        .commandsRemoved()
 
         // Help > Sheaf Help (⌘?). Opened from the Help menu only, so it isn't
         // listed in the Window menu, and it doesn't reopen at launch.

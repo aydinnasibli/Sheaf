@@ -29,7 +29,12 @@ every PDF you read.
   after it has been on screen a while, not when a link jumps there
 - Highlights are saved **inside the PDF** as standard annotations (so Preview shows them)
   **and** in Sheaf's library. Password-protected and digitally signed PDFs are never rewritten.
-- One window: the library, or the PDF you're reading; switch with ⌃Tab or ⇧⌘] / ⇧⌘[
+- One main window: the library, or the PDF you're reading; switch with ⌃Tab or ⇧⌘] / ⇧⌘[
+- **Two PDFs side by side**: Open in New Window (File menu, the library's context menu,
+  the reader's title menu, or ⌥-double-click) gives a PDF its own window. A PDF is in one
+  window at a time; Move to Main Window puts it back, and closing its window closes it.
+  The menus act on the window in front, focus mode is per window, PDF windows merge into
+  tabs (Window › Merge All Windows) and come back at the next launch
 - Light and Dark Mode
 
 ## Requirements
@@ -83,10 +88,10 @@ files added on disk appear in the project automatically.
 
 ```
 Sheaf/
-├── SheafApp.swift      App entry point: the window and its menus
+├── SheafApp.swift      App entry point: the windows and their menus
 ├── Info.plist          Document types (PDF) and app settings
 ├── Sheaf.entitlements  Sandbox permissions
-├── App/                Window, workspace of open PDFs, menu commands, app delegate, updater
+├── App/                Main and PDF windows, workspace of open PDFs, menu commands, app delegate, updater
 ├── Library/            Library screen: sidebar, PDF list, Highlights page, text matches, recent highlights
 ├── Review/             Flashcards from highlights: the deck and the Review page
 ├── Search/             The text index of every PDF, kept up to date in the background

@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The commands for PDFs, shared by the library's context menu and the File
-/// menu: open, Quick Look, show in Finder, share, rename, star, collections
-/// and remove from the library. They act on every PDF passed in (the selection).
+/// menu: open (here or in a new window), Quick Look, show in Finder, share,
+/// rename, star, collections and remove from the library. They act on every
+/// PDF passed in (the selection).
 struct PDFMenuItems: View {
     let entries: [LibraryEntry]
     let collections: [PDFCollection]
@@ -10,21 +11,38 @@ struct PDFMenuItems: View {
     /// The File menu's version: every item stays in place (disabled when it
     /// doesn't apply) and has its keyboard shortcut.
     var isMenuBar = false
+    /// The window the File menu acts on. The context menu is in the main
+    /// window's library.
+    var readerWindow: ReaderWindow?
 
     var body: some View {
         let isEmpty = entries.isEmpty
         // Shortcuts that mean something else in a text field work only
         // while the list has focus, as in Finder.
-        let listShortcuts = isMenuBar && workspace.isLibraryListFocused && workspace.isShowingLibrary
-        if !isMenuBar || workspace.isShowingLibrary {
+        let listShortcuts = isMenuBar && workspace.isLibraryListFocused && isLibraryOnScreen
+        if isLibraryOnScreen {
             Button(openTitle) { workspace.openPDFs(entries) }
                 .keyboardShortcut(listShortcuts ? KeyboardShortcut(.downArrow, modifiers: .command) : nil)
                 .disabled(isEmpty)
+            // Option-Return and Option-double-click in the list do this too.
+            Button(entries.count > 1 ? "Open in New Windows" : "Open in New Window") {
+                workspace.openPDFsInNewWindows(entries)
+            }
+            .keyboardShortcut(listShortcuts ? KeyboardShortcut(.return, modifiers: .option) : nil)
+            .disabled(isEmpty)
             Button(workspace.quickLookFile == nil ? "Quick Look" : "Close Quick Look") {
                 workspace.toggleQuickLook(entries)
             }
             .keyboardShortcut(isMenuBar ? KeyboardShortcut("y") : nil)
             .disabled(isEmpty && workspace.quickLookFile == nil)
+        } else if let readerWindow, let entry = entries.first {
+            // The PDF on screen moves into its own window, to read beside
+            // another, or back.
+            if readerWindow.isMain {
+                Button("Open in New Window") { workspace.openInNewWindow(entry) }
+            } else {
+                Button("Move to Main Window") { workspace.moveToMainWindow(entry.id) }
+            }
         }
         Button("Show in Finder") { workspace.showInFinder(entries) }
             .keyboardShortcut(isMenuBar ? KeyboardShortcut("r", modifiers: [.command, .option]) : nil)
@@ -62,6 +80,12 @@ struct PDFMenuItems: View {
         Button("Remove from Library\u{2026}", role: .destructive) { workspace.requestRemoval(of: entries) }
             .keyboardShortcut(listShortcuts ? KeyboardShortcut(.delete, modifiers: .command) : nil)
             .disabled(isEmpty)
+    }
+
+    /// Whether the window acted on shows the library, rather than a PDF.
+    private var isLibraryOnScreen: Bool {
+        guard let readerWindow else { return true }
+        return readerWindow.isMain && workspace.isShowingLibrary
     }
 
     private var openTitle: String {

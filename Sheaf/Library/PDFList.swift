@@ -1,11 +1,12 @@
+import AppKit
 import QuickLook
 import SwiftUI
 
 /// The library's list of PDFs. It's a native Mac list, so selecting works
 /// as in Finder: ⌘- and ⇧-click, ⌘A, the arrow keys, and typing the first
-/// letters of a title. Return or a double-click opens, Space shows Quick
-/// Look, Delete removes (after asking), and the context menu acts on the
-/// whole selection. Rows drag out as files, to Finder, Mail or a collection.
+/// letters of a title. Return or a double-click opens (with Option, in a
+/// new window), Space shows Quick Look, Delete removes (after asking), and
+/// the context menu acts on the whole selection. Rows drag out as files, to Finder, Mail or a collection.
 /// It draws Sheaf's own rows and selection rather than the stock look.
 struct PDFList: View {
     let rows: [LibraryEntry]
@@ -50,7 +51,12 @@ struct PDFList: View {
                     PDFMenuItems(entries: entries, collections: collections, workspace: workspace)
                 }
             } primaryAction: { ids in
-                workspace.openPDFs(entries(ids))
+                // Option-double-click (and Option-Return) opens each in its own window.
+                if NSEvent.modifierFlags.contains(.option) {
+                    workspace.openPDFsInNewWindows(entries(ids))
+                } else {
+                    workspace.openPDFs(entries(ids))
+                }
             }
             .onDeleteCommand { workspace.requestRemoval(of: selectedEntries) }
             .onKeyPress(.space) {

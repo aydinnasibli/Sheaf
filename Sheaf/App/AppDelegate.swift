@@ -12,16 +12,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DebugSnapshot.start()
         #endif
         // Control-Tab / Control-Shift-Tab switch between the library and open
-        // PDFs. macOS normally uses Control-Tab to move focus between
-        // controls, so catch it before that happens.
+        // PDFs in the main window. macOS normally uses Control-Tab to move
+        // focus between controls, so catch it before that happens.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard event.keyCode == 48, modifiers == .control || modifiers == [.control, .shift] else { return event }
-            MainActor.assumeIsolated {
-                guard let workspace = WindowRouter.shared.workspace, !workspace.documents.isEmpty else { return }
-                if modifiers.contains(.shift) { workspace.selectPrevious() } else { workspace.selectNext() }
+            let handled = MainActor.assumeIsolated {
+                guard let workspace = WindowRouter.shared.workspace else { return false }
+                // In a PDF's own window it's left to macOS, which switches
+                // tabs with it once windows are merged.
+                guard workspace.frontWindow == .main else { return false }
+                if !workspace.documents.isEmpty {
+                    if modifiers.contains(.shift) { workspace.selectPrevious() } else { workspace.selectNext() }
+                }
+                return true
             }
-            return nil
+            return handled ? nil : event
         }
         if WindowRouter.shared.library?.isTemporaryLibrary == true {
             // Once the window is up.
@@ -45,13 +51,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Start any save that was waiting for a pause in highlighting…
         NotificationCenter.default.post(name: .sheafFlushSaves, object: nil)
-        guard SaveTracker.shared.isSaving else { return .terminateNow }
+        guard SaveTracker.shared.isSaving else {
+            WindowRouter.shared.workspace?.isQuitting = true
+            return .terminateNow
+        }
         // …and quit once highlights are safely written into the files. A
         // save that takes longer than that (a slow or disconnected drive)
         // shouldn't keep Sheaf open: ask instead.
         Task {
             let finished = await SaveTracker.shared.waitForAll(timeout: .seconds(10))
             let quit = finished || SafetyAlerts.confirmQuitWhileSaving(fileNames: SaveTracker.shared.fileNames)
+            // PDF windows closing as Sheaf quits keep their PDFs for next time.
+            WindowRouter.shared.workspace?.isQuitting = quit
             NSApp.reply(toApplicationShouldTerminate: quit)
         }
         return .terminateLater

@@ -4,9 +4,20 @@ import SwiftUI
 /// The system share picker (AirDrop, Mail, Messages, Notes…) for PDF files,
 /// as Preview shows it.
 enum SharePicker {
-    /// The reader's title, which the picker points at when the PDF on screen
-    /// is shared from the menu bar. Set by the title menu.
-    static weak var readerTitleView: NSView?
+    /// The readers' titles, which the picker points at when the PDF on
+    /// screen is shared from the menu bar. Added by the title menus; there's
+    /// one in each window showing a PDF.
+    private static let readerTitleViews = NSHashTable<NSView>.weakObjects()
+
+    static func addReaderTitle(_ view: NSView) {
+        readerTitleViews.add(view)
+    }
+
+    /// The reader's title in the window in front, if it shows a PDF.
+    private static var frontReaderTitle: NSView? {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return nil }
+        return readerTitleViews.allObjects.first { $0.window === window }
+    }
 
     /// Shows the picker pointing at `view`; without one, at the reader's
     /// title if it's on screen, or else at the pointer (or the top of the
@@ -16,7 +27,7 @@ enum SharePicker {
         // After the menu that asked for it has closed.
         Task { @MainActor in
             let picker = NSSharingServicePicker(items: urls)
-            if let anchor = view ?? readerTitleView, anchor.window?.isVisible == true {
+            if let anchor = view ?? frontReaderTitle, anchor.window?.isVisible == true {
                 picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .maxY : .minY)
             } else if let window = NSApp.keyWindow ?? NSApp.mainWindow, let content = window.contentView {
                 picker.show(relativeTo: pointerRect(in: content, of: window), of: content, preferredEdge: content.isFlipped ? .maxY : .minY)

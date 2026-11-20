@@ -14,17 +14,21 @@ extension UTType {
 }
 
 /// What the File menu, the library's context menu and the reader's title
-/// menu do to PDFs: open, show in Finder, share, star, collections, rename
-/// and remove from the library. Each acts on the PDFs passed in; the menu
-/// bar passes `commandTargets`.
+/// menu do to PDFs: open (here or in a new window), show in Finder, share,
+/// star, collections, rename and remove from the library. Each acts on the
+/// PDFs passed in; the menu bar passes `commandTargets(in:)`.
 extension Workspace {
-    /// The PDFs the menu bar's PDF commands act on: the one on screen, or
-    /// the ones selected in the library's list (newest first).
-    var commandTargets: [LibraryEntry] {
-        if let document = selectedDocument {
+    /// The PDFs the menu bar's PDF commands act on in the main window: the
+    /// one on screen, or the ones selected in the library's list (newest first).
+    var commandTargets: [LibraryEntry] { commandTargets(in: mainWindow) }
+
+    /// What the menu bar's PDF commands act on in a window: the PDF on
+    /// screen there, or in the main window's library, the selected PDFs.
+    func commandTargets(in window: ReaderWindow) -> [LibraryEntry] {
+        if let document = document(in: window) {
             return document.entry.isInLibrary ? [document.entry] : []
         }
-        guard libraryScope.showsPDFs else { return [] }
+        guard window.isMain, libraryScope.showsPDFs else { return [] }
         return librarySelection.compactMap(library.entry(id:)).sorted { $0.lastOpenedAt > $1.lastOpenedAt }
     }
 
@@ -33,13 +37,26 @@ extension Workspace {
     /// Opens PDFs; the last one stays on screen. A PDF whose file can't be
     /// found asks what to do instead.
     func openPDFs(_ entries: [LibraryEntry]) {
-        for entry in entries {
-            guard library.resolveFile(for: entry) != nil else {
-                missingFileRequest = entry.id
-                continue
-            }
+        for entry in entries where canOpen(entry) {
             open(entry)
         }
+    }
+
+    /// Opens each PDF in its own window, to read side by side. A PDF whose
+    /// file can't be found asks what to do instead.
+    func openPDFsInNewWindows(_ entries: [LibraryEntry]) {
+        for entry in entries where canOpen(entry) {
+            openInNewWindow(entry)
+        }
+    }
+
+    /// Whether the PDF's file can be found; if it can't, asks about it.
+    private func canOpen(_ entry: LibraryEntry) -> Bool {
+        guard library.resolveFile(for: entry) != nil else {
+            missingFileRequest = entry.id
+            return false
+        }
+        return true
     }
 
     // MARK: Finder and sharing
@@ -143,7 +160,8 @@ extension Workspace {
     func remove(_ ids: [UUID], undoManager: UndoManager?) {
         let entries = ids.compactMap(library.entry(id:))
         guard !entries.isEmpty else { return }
-        for entry in entries where documents.contains(where: { $0.id == entry.id }) {
+        // In any window; a PDF's own window closes with it.
+        for entry in entries where isOpen(entry.id) {
             close(entry.id)
         }
         librarySelection.subtract(entries.map(\.id))

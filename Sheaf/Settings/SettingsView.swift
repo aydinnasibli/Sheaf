@@ -6,7 +6,8 @@ struct SettingsView: View {
     @State private var reading: ReadingSettings
 
     init(workspace: Workspace) {
-        _reading = State(initialValue: ReadingSettings { workspace.documents.compactMap(\.model) })
+        // Every open PDF, in its own window too.
+        _reading = State(initialValue: ReadingSettings { workspace.allDocuments.compactMap(\.model) })
     }
 
     var body: some View {

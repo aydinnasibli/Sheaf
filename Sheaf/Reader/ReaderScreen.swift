@@ -9,6 +9,7 @@ struct ReaderScreen: View {
     let document: OpenDocument
 
     @Environment(Workspace.self) private var workspace
+    @Environment(ReaderWindow.self) private var readerWindow
     @State private var isDropTargeted = false
 
     var body: some View {
@@ -33,7 +34,10 @@ struct ReaderScreen: View {
                         .foregroundStyle(Theme.inkMuted)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 380)
-                    PrimaryButton(title: "Back to Library") { workspace.close(document.id) }
+                    // In its own window, closing the PDF closes the window.
+                    PrimaryButton(title: readerWindow.isMain ? "Back to Library" : "Close Window") {
+                        workspace.close(document.id)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -45,8 +49,11 @@ struct ReaderScreen: View {
             if document.model == nil {
                 ToolbarItem(placement: .navigation) {
                     HStack(spacing: 12) {
-                        SquareIconButton(label: "Back to library (\u{21E7}\u{2318}L)", systemImage: "chevron.left") {
-                            workspace.showLibrary()
+                        // A PDF's own window has no library to go back to.
+                        if readerWindow.isMain {
+                            SquareIconButton(label: "Back to library (\u{21E7}\u{2318}L)", systemImage: "chevron.left") {
+                                workspace.showLibrary()
+                            }
                         }
                         Text(document.title)
                             .font(Theme.display(15))
@@ -99,6 +106,8 @@ struct ReaderLayout: View {
     let document: OpenDocument
 
     @Environment(Workspace.self) private var workspace
+    /// The window the reader is in: the main window or the PDF's own.
+    @Environment(ReaderWindow.self) private var readerWindow
     @Environment(\.undoManager) private var undoManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(ReaderModel.darkPagesKey) private var darkPages = false
@@ -106,10 +115,10 @@ struct ReaderLayout: View {
     @State private var pageEntry = ""
     @FocusState private var isSearchFocused: Bool
 
-    private var isFocusMode: Bool { workspace.isFocusMode }
+    private var isFocusMode: Bool { readerWindow.isFocusMode }
     /// The side panels sit beside the page when there's room; in a narrow
     /// window their buttons show them over the page instead.
-    private var panels: ReaderPanels { workspace.readerPanels }
+    private var panels: ReaderPanels { readerWindow.panels }
 
     // What the header shows at each width, so nothing is pushed into the
     // toolbar's overflow menu, down to half a laptop screen. Below each
@@ -126,11 +135,12 @@ struct ReaderLayout: View {
     @State private var penPickerWidth: CGFloat = 204
     @State private var controlsWidth: CGFloat = 250
     /// The title gets the header's spare room: the window less the traffic
-    /// lights, the two buttons beside the title, the other controls and the
-    /// gaps between them. In a narrow window it's cut short (the menu's
-    /// tooltip and Rename… show all of it).
+    /// lights, the two buttons beside the title (one in a PDF's own window),
+    /// the other controls and the gaps between them. In a narrow window it's
+    /// cut short (the menu's tooltip and Rename… show all of it).
     private var titleWidth: CGFloat {
-        min(280, max(90, width - 236 - penPickerWidth - controlsWidth))
+        let leading: CGFloat = readerWindow.isMain ? 236 : 196
+        return min(280, max(90, width - leading - penPickerWidth - controlsWidth))
     }
 
     var body: some View {
@@ -190,11 +200,13 @@ struct ReaderLayout: View {
             model.applyPageColors()
             model.restoreReadingPosition()
             model.startBackgroundWork()
-            model.pdfView.onEscape = { [workspace] in
+            // Esc acts on the window the PDF is in now, which changes when
+            // it moves to its own window or back.
+            model.pdfView.onEscape = { [readerWindow] in
                 // Esc first puts away a panel shown over the page.
-                if workspace.readerPanels.closeOverlay() { return true }
-                guard workspace.isFocusMode else { return false }
-                workspace.isFocusMode = false
+                if readerWindow.panels.closeOverlay() { return true }
+                guard readerWindow.isFocusMode else { return false }
+                readerWindow.isFocusMode = false
                 return true
             }
         }
@@ -308,8 +320,11 @@ struct ReaderLayout: View {
                             isOn: panels.isOver(.pages)
                         ) { panels.toggle(.pages) }
                     }
-                    SquareIconButton(label: "Back to library (\u{21E7}\u{2318}L)", systemImage: "chevron.left") {
-                        workspace.showLibrary()
+                    // A PDF's own window has no library to go back to.
+                    if readerWindow.isMain {
+                        SquareIconButton(label: "Back to library (\u{21E7}\u{2318}L)", systemImage: "chevron.left") {
+                            workspace.showLibrary()
+                        }
                     }
                 }
                 ReaderTitleMenu(model: model)
@@ -348,7 +363,7 @@ struct ReaderLayout: View {
                         label: isFocusMode ? "Leave focus mode (Esc)" : "Focus mode: only the page, full screen (\u{21E7}\u{2318}F)",
                         systemImage: isFocusMode ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                         isOn: isFocusMode
-                    ) { workspace.isFocusMode.toggle() }
+                    ) { readerWindow.isFocusMode.toggle() }
                 }
                 if !isFocusMode {
                     SquareIconButton(

@@ -2,11 +2,19 @@ import SwiftUI
 
 /// The questions the PDF commands ask, over whatever the window shows:
 /// removing PDFs from the library, renaming one, and what to do about a PDF
-/// whose file can't be found. The commands set a request on the workspace.
+/// whose file can't be found. The commands set a request on the workspace,
+/// and the window that was in front when they did asks it.
 struct PDFActionAlerts: ViewModifier {
     @Environment(Workspace.self) private var workspace
+    @Environment(ReaderWindow.self) private var readerWindow
     @Environment(\.undoManager) private var undoManager
     @State private var titleDraft = ""
+
+    /// Removing a PDF from its own window closes that window, so Undo goes
+    /// to the main window, where the library is.
+    private var removalUndoManager: UndoManager? {
+        readerWindow.isMain ? undoManager : workspace.mainWindow.undoManager ?? undoManager
+    }
 
     func body(content: Content) -> some View {
         let removing = workspace.removalRequest.map(entries) ?? []
@@ -16,7 +24,7 @@ struct PDFActionAlerts: ViewModifier {
         content
             .alert(summary.title, isPresented: isPresented(\.removalRequest)) {
                 Button("Remove", role: .destructive) {
-                    workspace.remove(removing.map(\.id), undoManager: undoManager)
+                    workspace.remove(removing.map(\.id), undoManager: removalUndoManager)
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -43,7 +51,7 @@ struct PDFActionAlerts: ViewModifier {
             ) { entry in
                 // Choosing this is the confirmation; Undo still brings it back.
                 Button("Remove from Library", role: .destructive) {
-                    workspace.remove([entry.id], undoManager: undoManager)
+                    workspace.remove([entry.id], undoManager: removalUndoManager)
                 }
                 Button("Keep", role: .cancel) {}
             } message: { entry in
@@ -55,10 +63,11 @@ struct PDFActionAlerts: ViewModifier {
         ids.compactMap(workspace.library.entry(id:))
     }
 
-    /// Shows an alert while the request is set, and clears it when the alert closes.
+    /// Shows an alert while the request is set, in the window it was made
+    /// in only, and clears it when the alert closes.
     private func isPresented<Value>(_ request: ReferenceWritableKeyPath<Workspace, Value?>) -> Binding<Bool> {
         Binding(
-            get: { workspace[keyPath: request] != nil },
+            get: { workspace.alertWindow == readerWindow.kind && workspace[keyPath: request] != nil },
             set: { if !$0 { workspace[keyPath: request] = nil } }
         )
     }

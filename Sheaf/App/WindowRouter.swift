@@ -2,37 +2,51 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Opens PDFs in Sheaf's window, from anywhere: the library, File > Open,
-/// and Finder ("Open With", double-click, dragging onto the Dock icon).
+/// Opens PDFs in Sheaf's windows, from anywhere: the library, File > Open,
+/// Finder ("Open With", double-click, dragging onto the Dock icon) and
+/// Spotlight. A PDF opens in the main window, unless it has its own window:
+/// then that window comes to the front.
 final class WindowRouter {
     static let shared = WindowRouter()
 
     var library: LibraryStore?
-    var workspace: Workspace?
+    var workspace: Workspace? {
+        // The workspace asks for its windows through here.
+        didSet { workspace?.showWindow = { [weak self] in self?.show($0) } }
+    }
     private var openWindowAction: OpenWindowAction?
     private var pendingURLs: [URL] = []
 
-    /// Called when the window appears, so the router can reopen it later.
+    /// Called when a window appears, so the router can open windows later.
     func attach(_ action: OpenWindowAction) {
         openWindowAction = action
         flush()
     }
 
-    /// Shows the window (reopening it if it was closed) with the library.
-    func showLibrary() {
-        workspace?.showLibrary()
-        openWindowAction?(id: "main")
+    /// Brings a reading window to the front, opening (or reopening) it if
+    /// needed. SwiftUI keeps one window per PDF, so asking for a PDF's
+    /// window again brings that window forward.
+    func show(_ window: ReaderWindow.Kind) {
+        switch window {
+        case .main: openWindowAction?(id: "main")
+        case .pdf(let id): openWindowAction?(id: PDFWindow.sceneID, value: id)
+        }
     }
 
+    /// Shows the main window (reopening it if it was closed) with the library.
+    func showLibrary() {
+        workspace?.showLibrary()
+        show(.main)
+    }
+
+    /// The workspace brings the PDF's window to the front.
     func open(_ entry: LibraryEntry, at highlight: HighlightRecord? = nil) {
         workspace?.open(entry, at: highlight)
-        openWindowAction?(id: "main")
     }
 
     /// Opens a PDF at a page (0-based), as when clicking a search match.
     func open(_ entry: LibraryEntry, atPage pageIndex: Int) {
         workspace?.open(entry, atPage: pageIndex)
-        openWindowAction?(id: "main")
     }
 
     /// Adds files to the library (if new) and opens them; the last one is shown.
@@ -61,6 +75,7 @@ final class WindowRouter {
         for url in urls { library.keepAccess(to: url) }
         let folders = urls.filter(LibraryStore.isFolder)
         let opened = library.add(urls: urls.filter { !folders.contains($0) })
+        // Each comes to the front in its window.
         for entry in opened {
             workspace.open(entry)
         }
@@ -74,6 +89,6 @@ final class WindowRouter {
                 workspace.showLibrary()
             }
         }
-        openWindowAction?(id: "main")
+        if opened.isEmpty { show(.main) }
     }
 }

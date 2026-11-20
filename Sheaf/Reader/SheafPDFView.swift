@@ -215,10 +215,24 @@ private final class BoxPreview: NSView {
 
 /// Shows the reader's page view inside SwiftUI. The view is owned by
 /// `ReaderModel`, so it survives SwiftUI updates.
+///
+/// A PDF can move to another window (into its own, or back), and the old
+/// window may tear down its reader after the new one has shown the page
+/// view. So the page view sits in a container of its own here: taking the
+/// old container away leaves the page view wherever it is now.
 struct PDFKitView: NSViewRepresentable {
     let pdfView: PDFView
 
-    func makeNSView(context: Context) -> PDFView { pdfView }
+    func makeNSView(context: Context) -> NSView {
+        // As big as the page view already is, so it isn't squashed to
+        // nothing (and doesn't lose its place) before SwiftUI sizes it.
+        let container = NSView(frame: CGRect(origin: .zero, size: pdfView.frame.size))
+        pdfView.frame = container.bounds
+        pdfView.autoresizingMask = [.width, .height]
+        // Takes it out of the container it was in.
+        container.addSubview(pdfView)
+        return container
+    }
 
-    func updateNSView(_ view: PDFView, context: Context) {}
+    func updateNSView(_ container: NSView, context: Context) {}
 }

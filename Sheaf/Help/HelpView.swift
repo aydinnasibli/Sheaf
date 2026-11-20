@@ -179,6 +179,7 @@ struct HelpView: View {
     private var reading: some View {
         VStack(alignment: .leading, spacing: 18) {
             Subsection("Focus mode", "View \u{203A} Focus Mode (\u{21E7}\u{2318}F) hides the panels and fills the screen with the page. Press Esc or \u{21E7}\u{2318}F to come back.")
+            Subsection("Two PDFs side by side", "Open a PDF in its own window: choose Open in New Window from the File menu, from the menu when you Control-click a PDF in the library, or from the menu under the PDF\u{2019}s title. In the library\u{2019}s list, Option-double-click or Option-Return does it too. A PDF is in one window at a time, and Move to Main Window puts it back. Closing its window closes the PDF. Window \u{203A} Merge All Windows keeps PDF windows together as tabs.")
             Subsection("Bookmarks", "Press \u{2318}D, or click the bookmark in the toolbar, to bookmark the page you\u{2019}re on. Bookmarked pages get a ribbon in the page strip and are listed at the top of the Highlights panel; click one to go there.")
             Subsection("Back", "When you jump somewhere (by following a link, or clicking the contents, a page, a search result or a highlight), a Back button appears at the bottom left of the page. Click it, or press \u{2318}[, to return to where you were. \u{2318}] goes forward again.")
             Subsection("Going to a page", "Go \u{203A} Go to Page (\u{2325}\u{2318}G) takes the page number printed in the PDF, like xii or 245, or a number counted from the first page.")

@@ -2,12 +2,13 @@ import AppKit
 import SwiftUI
 
 /// The PDF's title in the reader's header. Clicking it opens a menu, like
-/// the title menus of Preview and Pages: rename, show in Finder, share, and
-/// where the file is.
+/// the title menus of Preview and Pages: rename, show in Finder, share,
+/// open in its own window (or back in the main window), and where the file is.
 struct ReaderTitleMenu: View {
     let model: ReaderModel
 
     @Environment(Workspace.self) private var workspace
+    @Environment(ReaderWindow.self) private var readerWindow
     @State private var anchor: NSView?
 
     var body: some View {
@@ -16,6 +17,13 @@ struct ReaderTitleMenu: View {
                 Button("Rename\u{2026}") { workspace.requestRename(entry) }
                 Button("Show in Finder") { workspace.showInFinder([entry]) }
                 Button("Share\u{2026}") { workspace.share([entry], from: anchor) }
+                Divider()
+                // To read it beside another PDF, and back.
+                if readerWindow.isMain {
+                    Button("Open in New Window") { workspace.openInNewWindow(entry) }
+                } else {
+                    Button("Move to Main Window") { workspace.moveToMainWindow(entry.id) }
+                }
                 Divider()
                 Section("Location") {
                     location(of: URL(filePath: entry.lastKnownPath))
@@ -39,7 +47,7 @@ struct ReaderTitleMenu: View {
         .background(AnchorViewReader { view in
             anchor = view
             // File › Share… points the picker here while the PDF is on screen.
-            SharePicker.readerTitleView = view
+            SharePicker.addReaderTitle(view)
         })
         // The whole title, which a narrow window cuts short.
         .help("\u{201C}\(model.title)\u{201D}: click to rename, show in Finder or share it")
