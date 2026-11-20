@@ -81,7 +81,7 @@ struct ScannedPageTests {
 
     // MARK: Box highlights
 
-    @Test func aBoxHighlightIsAHighlightWithTheBoxAndTheWordsInIt() async throws {
+    @Test(.enabled(if: TextRecognitionCheck.isAvailable, "This Mac can't read text in pictures")) func aBoxHighlightIsAHighlightWithTheBoxAndTheWordsInIt() async throws {
         let (model, _) = try makeReader([.scanned("Mitochondria produce energy")])
         let undo = UndoManager()
         undo.groupsByEvent = false
@@ -112,7 +112,7 @@ struct ScannedPageTests {
         #expect(model.highlights.first?.text.localizedCaseInsensitiveContains("mitochondria") == true)
     }
 
-    @Test func wordsFoundInABoxReachSpotlight() async throws {
+    @Test(.enabled(if: TextRecognitionCheck.isAvailable, "This Mac can't read text in pictures")) func wordsFoundInABoxReachSpotlight() async throws {
         let spotlight = FakeHighlightIndex()
         store.searchIndex = spotlight
         let (model, _) = try makeReader([.scanned("Mitochondria produce energy")])
@@ -153,7 +153,7 @@ struct ScannedPageTests {
 
     // MARK: Search
 
-    @Test func searchFindsWordsOnScannedPages() async throws {
+    @Test(.enabled(if: TextRecognitionCheck.isAvailable, "This Mac can't read text in pictures")) func searchFindsWordsOnScannedPages() async throws {
         let (model, _) = try makeReader([
             .text("Photosynthesis on a typed page"),
             .scanned("Photosynthesis converts light"),
@@ -184,7 +184,7 @@ struct ScannedPageTests {
         #expect(model.pdfView.currentSelection == nil)
     }
 
-    @Test func matchesOnScannedPagesAreMarkedOverTheWords() async throws {
+    @Test(.enabled(if: TextRecognitionCheck.isAvailable, "This Mac can't read text in pictures")) func matchesOnScannedPagesAreMarkedOverTheWords() async throws {
         let (model, _) = try makeReader([.scanned("Photosynthesis converts light")])
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = model.pdfView

@@ -39,7 +39,7 @@ struct LibraryTextSearchTests {
 
     // MARK: Scanned pages
 
-    @Test func wordsReadOffScannedPagesAreFoundInTheLibrary() async throws {
+    @Test(.enabled(if: TextRecognitionCheck.isAvailable, "This Mac can't read text in pictures")) func wordsReadOffScannedPagesAreFoundInTheLibrary() async throws {
         let url = folder.appending(path: "Course reader.pdf")
         #expect(TestPDF.make([.text("Cells and membranes"), .scanned("Photosynthesis converts light"), .text("Summary")]).write(to: url))
         let entry = try #require(store.add(urls: [url]).first)

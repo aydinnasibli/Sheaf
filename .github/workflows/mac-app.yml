@@ -36,14 +36,22 @@ jobs:
         run: |
           sudo xcode-select -s "$XCODE_APP"
           xcodebuild -version
+          sw_vers
           echo "DERIVED_DATA=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
 
-      # -quiet prints only warnings, errors and failing tests.
+      # -quiet prints only warnings, errors and failing tests. If a test
+      # fails, the reasons are printed from the result bundle.
       - name: Test
         timeout-minutes: 15
         run: |
-          xcodebuild -quiet -project Sheaf.xcodeproj -scheme Sheaf \
-            -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" test
+          RESULTS="$RUNNER_TEMP/Tests.xcresult"
+          if ! xcodebuild -quiet -project Sheaf.xcodeproj -scheme Sheaf \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" \
+            -resultBundlePath "$RESULTS" test; then
+            xcrun xcresulttool get test-results summary --path "$RESULTS" --format json \
+              | jq -r '.testFailures[]? | "\(.testIdentifierString // .testName): \(.failureText)"' || true
+            exit 1
+          fi
 
       # The build number goes into the app: Sparkle compares it to decide
       # whether a build is newer, and About Sheaf shows it.
