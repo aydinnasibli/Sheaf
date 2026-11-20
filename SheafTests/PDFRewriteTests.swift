@@ -250,6 +250,11 @@ struct PDFRewriteTests {
         let table = try #require(Int(tail[startxref.upperBound...].split(whereSeparator: \.isWhitespace).first ?? ""))
         let lines = text(at: table).split(whereSeparator: \.isNewline)
         #expect(lines.first == "xref")
+        // Newer macOS (27) keeps these catalog entries itself when PDFKit
+        // saves. Then Sheaf has nothing to put back and appends nothing:
+        // the file is PDFKit's own, whose last table has no "/Prev". The
+        // checks above already found the entries.
+        guard text(at: table).contains("/Prev") else { return }
         let section = lines[1].split(separator: " ")
         #expect(section.last == "1")
         let catalogNumber = try #require(section.first.flatMap { Int($0) })
